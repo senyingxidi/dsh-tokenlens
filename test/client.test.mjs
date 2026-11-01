@@ -148,9 +148,16 @@ function bucket(overrides = {}) {
   return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, messages: 0, ...overrides }
 }
 
-/** One allowance window, resetting `hours` from now. */
+/**
+ * One allowance window, resetting `hours` from now.
+ *
+ * The extra 30 s keeps the floored countdown text ("2 小时 30 分后重置" …) stable
+ * for the duration of a test: on a busy CI runner the first test can take ~1.4 s
+ * between creating the fixture and rendering, which used to cross a whole-minute
+ * boundary and turn 2h30m into 2h29m (Windows-only flake, v1.3.4).
+ */
 function windowFixture(percent, hoursFromNow, overrides = {}) {
-  const remainingMs = Math.round(hoursFromNow * 3600000)
+  const remainingMs = Math.round(hoursFromNow * 3600000) + 30_000
   return {
     id: 'rolling',
     percent,
