@@ -23,7 +23,7 @@ API keys and usage data manually before pasting logs into an issue.
 Please do **not** open a public issue, discussion, or pull request for a security problem.
 
 - Open a private report through GitHub Security Advisories:
-  <https://github.com/daigahou/dsh-tokenlens/security/advisories/new>
+  <https://github.com/senyingxidi/dsh-tokenlens/security/advisories/new>
 
 Please include:
 

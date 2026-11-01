@@ -20,10 +20,10 @@
         "zh": "按所选供应商显示套餐容量（OpenCode / Command Code / DeepSeek / OpenRouter / Moonshot / Z.ai / 火山引擎 等 15 家适配器），并汇总 DSH、ZCode、OpenCode CLI、WorkBuddy、Qoder 上的本机 Token 用量（今日 / 7 天 / 30 天 / 总计）。"
       },
       "icon": "icon.svg",
-      "author": "daigahou",
-      "homepage": "https://github.com/daigahou/dsh-tokenlens#readme",
+      "author": "senyingxidi",
+      "homepage": "https://github.com/senyingxidi/dsh-tokenlens#readme",
       "repository": {
-        "url": "https://github.com/daigahou/dsh-tokenlens"
+        "url": "https://github.com/senyingxidi/dsh-tokenlens"
       },
       "versions": [
         {

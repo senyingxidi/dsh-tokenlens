@@ -4,12 +4,12 @@
 
 [![npm version](https://img.shields.io/npm/v/dsh-tokenlens.svg)](https://www.npmjs.com/package/dsh-tokenlens)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![CI](https://github.com/daigahou/dsh-tokenlens/actions/workflows/ci.yml/badge.svg)](https://github.com/daigahou/dsh-tokenlens/actions/workflows/ci.yml)
+[![CI](https://github.com/senyingxidi/dsh-tokenlens/actions/workflows/ci.yml/badge.svg)](https://github.com/senyingxidi/dsh-tokenlens/actions/workflows/ci.yml)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D24-brightgreen)](package.json)
 
 > **一眼看清你的用量**：在 DSH 输入框下方显示当前供应商的套餐容量，并汇总本机跨 Harness 的 Token 消耗。
 
-**dsh-TokenLens（词元透镜）** 是 DSH（DeepSeek Harness）的用量插件（v1.3.2，公开版本）。它把两类数字**按不同口径**分开呈现：
+**dsh-TokenLens（词元透镜）** 是 DSH（DeepSeek Harness）的用量插件（v1.3.3，公开版本）。它把两类数字**按不同口径**分开呈现：
 
 - **套餐容量**（供应商服务端权威值）：百分比窗口、`已用 / 上限`、账户余额或剩余额度；
 - **本机 Token 统计**（本机记录）：当前供应商在本机所有已接入 Harness 上的合计用量，也可切到「全部 Harness」看总账。
@@ -53,27 +53,27 @@
 
 ### 输入框下方的用量 chip
 
-![输入框下方的用量 chip](https://raw.githubusercontent.com/daigahou/dsh-tokenlens/main/docs/images/composer-chip.png)
+![输入框下方的用量 chip](https://raw.githubusercontent.com/senyingxidi/dsh-tokenlens/main/docs/images/composer-chip.png)
 
 ### 工作区 Token 徽标与悬浮统计
 
-![工作区 Token 徽标与悬浮统计](https://raw.githubusercontent.com/daigahou/dsh-tokenlens/main/docs/images/workspace-badge-hover.png)
+![工作区 Token 徽标与悬浮统计](https://raw.githubusercontent.com/senyingxidi/dsh-tokenlens/main/docs/images/workspace-badge-hover.png)
 
 ### 用量详情弹窗
 
 | 图表模式 | 数据模式 |
 |:---:|:---:|
-| ![统计弹窗 · 图表模式](https://raw.githubusercontent.com/daigahou/dsh-tokenlens/main/docs/images/stats-chart.png) | ![统计弹窗 · 数据模式](https://raw.githubusercontent.com/daigahou/dsh-tokenlens/main/docs/images/stats-data.png) |
+| ![统计弹窗 · 图表模式](https://raw.githubusercontent.com/senyingxidi/dsh-tokenlens/main/docs/images/stats-chart.png) | ![统计弹窗 · 数据模式](https://raw.githubusercontent.com/senyingxidi/dsh-tokenlens/main/docs/images/stats-data.png) |
 
 ### 供应商管理页
 
 | 供应商配置 | 插件设置 |
 |:---:|:---:|
-| ![供应商配置](https://raw.githubusercontent.com/daigahou/dsh-tokenlens/main/docs/images/settings-providers.png) | ![插件设置](https://raw.githubusercontent.com/daigahou/dsh-tokenlens/main/docs/images/settings-plugin.png) |
+| ![供应商配置](https://raw.githubusercontent.com/senyingxidi/dsh-tokenlens/main/docs/images/settings-providers.png) | ![插件设置](https://raw.githubusercontent.com/senyingxidi/dsh-tokenlens/main/docs/images/settings-plugin.png) |
 
 ### 内置供应商池
 
-![内置供应商池](https://raw.githubusercontent.com/daigahou/dsh-tokenlens/main/docs/images/settings-builtin.png)
+![内置供应商池](https://raw.githubusercontent.com/senyingxidi/dsh-tokenlens/main/docs/images/settings-builtin.png)
 
 ## 安装
 
@@ -106,7 +106,7 @@ dsh plugin --profile <profile> add dsh-tokenlens
 ```jsonc
 {
   "dependencies": {
-    "dsh-tokenlens": "^1.3.2"
+    "dsh-tokenlens": "^1.3.3"
   },
   "dsh": {
     "profile": {
@@ -128,13 +128,13 @@ dsh plugin --profile <profile> add dsh-tokenlens
 无法访问 npm（或想直接跟踪仓库最新代码）时，可以用仓库地址安装（需要能访问 GitHub）：
 
 1. DSH → 侧边栏「插件」→「添加插件」；
-2. 输入 `https://github.com/daigahou/dsh-tokenlens`（或 `github:daigahou/dsh-tokenlens`），选择安装源后点「安装」；
+2. 输入 `https://github.com/senyingxidi/dsh-tokenlens`（或 `github:senyingxidi/dsh-tokenlens`），选择安装源后点「安装」；
 3. 安装完成后 DSH 会把它选入 profile 的 `dsh.profile.bundles` 并默认启用；若界面没有变化，重启 DSH。
 
 等价的 CLI 写法（只安装依赖，仍需手动把 `dsh-tokenlens` 加入 `dsh.profile.bundles`）：
 
 ```powershell
-dsh plugin --profile <profile> add "github:daigahou/dsh-tokenlens"
+dsh plugin --profile <profile> add "github:senyingxidi/dsh-tokenlens"
 ```
 
 > 注意：GitHub 源安装的是**默认分支最新提交**（不是 tag），DSH 不支持原地升级，升级时先卸载再安装。国内网络访问 GitHub 可能不稳定；插件发布到 npm 后建议改用方式 A。
@@ -165,7 +165,7 @@ dsh plugin --profile <profile> add "link:<path-to-dsh-tokenlens>"
 1. 打开 DSH → 侧边栏「插件」→「实验性插件」旁的「更多」→ 打开 **自定义插件市场**；
 2. 「已安装」旁出现 **发现** 标签 → 点 **添加索引源**，粘贴：
    ```
-   https://raw.githubusercontent.com/daigahou/dsh-tokenlens/main/market/index.json
+   https://raw.githubusercontent.com/senyingxidi/dsh-tokenlens/main/market/index.json
    ```
 3. 在「发现」里搜索 `TokenLens`（或浏览 `dsh-TokenLens` 卡片）→ 安装。
 
@@ -401,7 +401,7 @@ Host 半注册 `tokenlens_usage`，参数 `action`（默认 `snapshot`）与可�
 要求 **Node.js ≥ 24**（DSH Desktop 自带；用到 `node:sqlite` 与 zstd 解压），无运行时 npm 依赖：
 
 ```powershell
-git clone https://github.com/daigahou/dsh-tokenlens.git
+git clone https://github.com/senyingxidi/dsh-tokenlens.git
 cd dsh-tokenlens
 node --test        # 280 个用例
 ```
@@ -437,4 +437,4 @@ node scripts/bump-version.mjs <version> "<说明>"
 
 ## 许可
 
-[MIT](LICENSE) © daigahou
+[MIT](LICENSE) © senyingxidi

@@ -4,15 +4,16 @@
 
 **版本记录约定**：同一发布日只保留一个章节，标题取当日**最后一个**已发布版本号；当日多次发布的改动合并到该章节，并在标题下注明当日实际发布过的版本号（npm 上仍可安装这些独立版本）。若当日已有发布，后续小改动不再单独增加版本号，而是并入下一篇日志。这样日志按天规整、不出现同日多个小版本。
 
-## 1.3.2 — 2026-11-01
+## 1.3.3 — 2026-11-01
 
-（当日已发布版本：v1.2.2 / v1.3.0 / v1.3.1 / v1.3.2）
+（当日已发布版本：v1.2.2 / v1.3.0 / v1.3.1 / v1.3.3；v1.3.2 因仓库迁移未发布）
 
 - feat(update): 「启动时检查更新」改为**默认开启**（可在插件设置关闭）；启动时向 npm registry 查询一次 latest 版本号，不携带凭据 / 账号 / 用量，失败只记录错误、不阻塞启动
 - feat(ui): 详情弹窗（统计首页）右下角的**插件版本处**显示更新状态——有新版本时显示「有新版本 vX」并可点击打开 npm；无新版本时显示「已是最新版本」；检查失败或关闭检查时不显示
 - feat(update): 供应商管理页「插件设置 → 更新检查」保留开关、隐私提示、状态行（尚未检查 / 正在检查 / 已是最新 / 发现新版本 / 检查失败可重试）与「立即检查」；并发检查单飞，仅在开关关→开时补查
 - feat(wire): `hello` / `providers` 携带 `update`（`UpdateInfo`）与 `updatePackageUrl`；`settings.updateCheck` 默认 `true`；新增 bridge action `updateCheck`（Agent 工具同步支持）
 - fix(workspaces): 修复「工作区悬浮卡片不显示 Token 明细」——Host 裁剪本地路径时把 `path` 误删成空串，默认工作区等「界面标题 ≠ 统计标签」的场景匹配失败；现只下发文件夹名 basename，客户端标题匹配大小写不敏感并兼容旧 Host
+- chore(repo): 仓库迁移到 **senyingxidi/dsh-tokenlens**（原作者账号改名）；同步更新 `package.json` 的 repository/homepage/bugs、README 徽章与 7 张截图、`market/index.json`、CONTRIBUTING / SECURITY / CODE_OF_CONDUCT / Issue 模板与 LICENSE 署名；旧 GitHub 地址会 301 重定向，旧市场索引 raw 地址继续可用
 - fix(ui): 插件版本处自愈——页面在插件更新前加载时，`hello` 的旧版本号不再覆盖新的 Host 版本（取 hello / providers / 更新检查 `current` 中最新的版本），无需刷新页面即可显示正确版本
 - docs: README 增加「用 `link:` 安装的插件不要从插件市场重复安装/升级」的 Windows pnpm EPERM 排错说明；CHANGELOG 改为按发布日合并
 - 测试：280 个自动化用例（版本比较/检查/并发、设置开关、状态行、图表下钻与窗口、工作区 wire 回归）

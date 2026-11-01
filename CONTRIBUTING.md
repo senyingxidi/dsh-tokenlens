@@ -15,7 +15,7 @@ node --version   # 期望 v24.x 或更高
 ## 快速开始
 
 ```bash
-git clone https://github.com/daigahou/dsh-tokenlens.git
+git clone https://github.com/senyingxidi/dsh-tokenlens.git
 cd dsh-tokenlens
 node --test
 ```

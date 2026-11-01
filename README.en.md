@@ -4,12 +4,12 @@
 
 [![npm version](https://img.shields.io/npm/v/dsh-tokenlens.svg)](https://www.npmjs.com/package/dsh-tokenlens)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![CI](https://github.com/daigahou/dsh-tokenlens/actions/workflows/ci.yml/badge.svg)](https://github.com/daigahou/dsh-tokenlens/actions/workflows/ci.yml)
+[![CI](https://github.com/senyingxidi/dsh-tokenlens/actions/workflows/ci.yml/badge.svg)](https://github.com/senyingxidi/dsh-tokenlens/actions/workflows/ci.yml)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D24-brightgreen)](package.json)
 
 > One glance at your usage: plan capacity for the selected provider plus local token statistics across harnesses, right below the DSH composer.
 
-**dsh-TokenLens** is a usage plugin for DSH (DeepSeek Harness), version v1.3.2. It keeps two kinds of numbers separate:
+**dsh-TokenLens** is a usage plugin for DSH (DeepSeek Harness), version v1.3.3. It keeps two kinds of numbers separate:
 
 - **Plan capacity** — the provider's authoritative server-side values (percentage windows, used / cap, balance or remaining credit);
 - **Local token stats** — tokens consumed on this machine across every connected harness, for the selected provider or for all providers combined.
@@ -31,27 +31,27 @@ Everything is computed locally: zero runtime dependencies, no external database,
 
 **Usage chip below the composer**
 
-![Usage chip below the composer](https://raw.githubusercontent.com/daigahou/dsh-tokenlens/main/docs/images/composer-chip.png)
+![Usage chip below the composer](https://raw.githubusercontent.com/senyingxidi/dsh-tokenlens/main/docs/images/composer-chip.png)
 
 **Workspace token badge and hover card**
 
-![Workspace token badge and hover card](https://raw.githubusercontent.com/daigahou/dsh-tokenlens/main/docs/images/workspace-badge-hover.png)
+![Workspace token badge and hover card](https://raw.githubusercontent.com/senyingxidi/dsh-tokenlens/main/docs/images/workspace-badge-hover.png)
 
 **Usage dialog**
 
 | Chart mode | Data mode |
 |:---:|:---:|
-| ![Chart mode](https://raw.githubusercontent.com/daigahou/dsh-tokenlens/main/docs/images/stats-chart.png) | ![Data mode](https://raw.githubusercontent.com/daigahou/dsh-tokenlens/main/docs/images/stats-data.png) |
+| ![Chart mode](https://raw.githubusercontent.com/senyingxidi/dsh-tokenlens/main/docs/images/stats-chart.png) | ![Data mode](https://raw.githubusercontent.com/senyingxidi/dsh-tokenlens/main/docs/images/stats-data.png) |
 
 **Provider management page**
 
 | Provider settings | Plugin settings |
 |:---:|:---:|
-| ![Provider settings](https://raw.githubusercontent.com/daigahou/dsh-tokenlens/main/docs/images/settings-providers.png) | ![Plugin settings](https://raw.githubusercontent.com/daigahou/dsh-tokenlens/main/docs/images/settings-plugin.png) |
+| ![Provider settings](https://raw.githubusercontent.com/senyingxidi/dsh-tokenlens/main/docs/images/settings-providers.png) | ![Plugin settings](https://raw.githubusercontent.com/senyingxidi/dsh-tokenlens/main/docs/images/settings-plugin.png) |
 
 **Built-in provider pool**
 
-![Built-in provider pool](https://raw.githubusercontent.com/daigahou/dsh-tokenlens/main/docs/images/settings-builtin.png)
+![Built-in provider pool](https://raw.githubusercontent.com/senyingxidi/dsh-tokenlens/main/docs/images/settings-builtin.png)
 
 ## Install
 
@@ -66,16 +66,16 @@ dsh plugin --profile <profile> add dsh-tokenlens
 Then make sure `dsh.profile.bundles` in `$DSH_HOME/profiles/<profile>/package.json` contains `"dsh-tokenlens"`:
 
 ```jsonc
-{ "dependencies": { "dsh-tokenlens": "^1.3.2" },
+{ "dependencies": { "dsh-tokenlens": "^1.3.3" },
   "dsh": { "profile": { "bundles": ["…", "dsh-tokenlens"] } } }
 ```
 
 Restart DSH or wait for profile hot recomposition.
 
-**Option B — from GitHub.** In DSH, open **Plugins → Add plugin**, enter `https://github.com/daigahou/dsh-tokenlens` (or `github:daigahou/dsh-tokenlens`) and install. DSH selects the bundle in `dsh.profile.bundles` and enables it by default. CLI equivalent (installs the dependency only; add `"dsh-tokenlens"` to `dsh.profile.bundles` yourself):
+**Option B — from GitHub.** In DSH, open **Plugins → Add plugin**, enter `https://github.com/senyingxidi/dsh-tokenlens` (or `github:senyingxidi/dsh-tokenlens`) and install. DSH selects the bundle in `dsh.profile.bundles` and enables it by default. CLI equivalent (installs the dependency only; add `"dsh-tokenlens"` to `dsh.profile.bundles` yourself):
 
 ```powershell
-dsh plugin --profile <profile> add "github:daigahou/dsh-tokenlens"
+dsh plugin --profile <profile> add "github:senyingxidi/dsh-tokenlens"
 ```
 
 GitHub installs track the latest commit on the default branch (not a tag); updates require uninstall + reinstall, and GitHub access can be unreliable from some networks.
@@ -89,7 +89,7 @@ GitHub installs track the latest commit on the default branch (not a tag); updat
 1. DSH → **Plugins** → **More** next to *Experimental plugins* → enable **Custom plugin market**;
 2. Open **Discover** → **Add index source** → paste:
    ```
-   https://raw.githubusercontent.com/daigahou/dsh-tokenlens/main/market/index.json
+   https://raw.githubusercontent.com/senyingxidi/dsh-tokenlens/main/market/index.json
    ```
 3. Search for `TokenLens` in **Discover** and install.
 
@@ -143,4 +143,4 @@ Release: `node scripts/bump-version.mjs <version> "<note>"` updates `package.jso
 
 ## License
 
-[MIT](LICENSE) © daigahou
+[MIT](LICENSE) © senyingxidi

@@ -14,7 +14,7 @@ body:
         secret into a GitHub issue — a leaked key must be revoked by you, we cannot do it.
 
         > **Security vulnerabilities must not be reported here.** Please follow
-        > [SECURITY.md](https://github.com/daigahou/dsh-tokenlens/blob/main/SECURITY.md)
+        > [SECURITY.md](https://github.com/senyingxidi/dsh-tokenlens/blob/main/SECURITY.md)
         > and report privately through GitHub Security Advisories.
 
   - type: input
