@@ -9,7 +9,7 @@
 
 > One glance at your usage: plan capacity for the selected provider plus local token statistics across harnesses, right below the DSH composer.
 
-**dsh-TokenLens** is a usage plugin for DSH (DeepSeek Harness), version v1.3.0. It keeps two kinds of numbers separate:
+**dsh-TokenLens** is a usage plugin for DSH (DeepSeek Harness), version v1.3.1. It keeps two kinds of numbers separate:
 
 - **Plan capacity** — the provider's authoritative server-side values (percentage windows, used / cap, balance or remaining credit);
 - **Local token stats** — tokens consumed on this machine across every connected harness, for the selected provider or for all providers combined.
@@ -21,7 +21,7 @@ Everything is computed locally: zero runtime dependencies, no external database,
 - **Usage chip below the composer** — follows the selected model provider and shows its plan capacity; providers without an adapter or credentials stay hidden.
 - **Details dialog** — plan capacity windows with reset times (plus an optional "consumed · estimated consumable" hint) and local token stats for today / last 7 days / last 30 days / all-time, scoped to the current provider or all harnesses.
 - **Data and chart modes** — tables, a daily trend chart and ring charts with breakdowns by harness, provider, top model and unmapped providers. In chart mode, clicking a day's bar drills into that day's 24 hourly bars; the 明细 rings switch between today / last 7 days / last X days (or last 30 days) / all time.
-- **Provider management page** — enabled / built-in / all filters, enable switches, credential status, console links, label editing, connection tests, subscription badges and plugin settings (label style, default view/scope, details expansion, default 明细 donut window, optional startup update check with a "check now" action).
+- **Provider management page** — enabled / built-in / all filters, enable switches, credential status, console links, label editing, connection tests, subscription badges and plugin settings (label style, default view/scope, details expansion, default 明细 donut window, startup update check — on by default — with a "check now" action).
 - **Auto-discovery and agent tool** — providers configured in DSH Settings → Model Services are detected by route id or base-URL host and reuse their DSH credentials; `tokenlens_usage` lets the model query snapshots, local stats and diagnostics.
 - **Local-only** — 5 harnesses (DSH, ZCode, OpenCode CLI, WorkBuddy / CodeBuddy CLI, Qoder CN CLI), 25 built-in providers (16 with plan / balance adapters), read-only local data, no telemetry.
 
@@ -66,7 +66,7 @@ dsh plugin --profile <profile> add dsh-tokenlens
 Then make sure `dsh.profile.bundles` in `$DSH_HOME/profiles/<profile>/package.json` contains `"dsh-tokenlens"`:
 
 ```jsonc
-{ "dependencies": { "dsh-tokenlens": "^1.3.0" },
+{ "dependencies": { "dsh-tokenlens": "^1.3.1" },
   "dsh": { "profile": { "bundles": ["…", "dsh-tokenlens"] } } }
 ```
 
@@ -123,7 +123,7 @@ Host bridge route: `/api/tokenlens`; agent tool: `tokenlens_usage`.
 
 - **Read-only**: only local session logs and harness databases are read; SQLite is opened read-only and only token counters, timestamps and provider / model fields are queried — never message contents.
 - **Keys stay local**: API keys are resolved in the Host process from DSH credentials, environment variables or the DSH credentials file, and are sent only to the matching provider's official HTTPS endpoint. They are never exposed to the browser, logged or included in diagnostics.
-- **No telemetry**: nothing is collected, uploaded, or fetched from remote config / CDN sources (icons are inline SVG). The only optional outbound request is the startup update check (v1.3.0, off by default): when enabled it asks the npm registry once for the published version number, without credentials, identifiers or usage data.
+- **No telemetry**: nothing is collected, uploaded, or fetched from remote config / CDN sources (icons are inline SVG). The only outbound request is the startup update check (introduced in v1.3.0, on by default since v1.3.1 and switchable off): it asks the npm registry once for the published version number, without credentials, identifiers or usage data.
 - **Owner-only data**: management overrides are written atomically to `$DSH_HOME/dsh-tokenlens/providers.json` with owner-only permissions; DSH model settings are never modified.
 
 ## Limitations
@@ -131,13 +131,13 @@ Host bridge route: `/api/tokenlens`; agent tool: `tokenlens_usage`.
 - Provider usage endpoints are mostly private / undocumented and may change at any time; the plugin degrades gracefully (retryable errors, hidden chips, per-row fallbacks) but availability is not guaranteed.
 - Plan capacity shows native server values only: no token → money conversion; Command Code monthly percentage is not guessed when no grant is reported.
 - "Estimated consumable" is derived from local tokens and the plan percentage; it is only a hint, not a provider commitment.
-- The startup update check compares the **latest npm release** only (off by default); commits on the GitHub repository are not detected — a git-installed plugin must be uninstalled and reinstalled to update.
+- The startup update check is on by default (switchable off) and compares the **latest npm release** only; commits on the GitHub repository are not detected — a git-installed plugin must be uninstalled and reinstalled to update.
 - Local stats cover connected harnesses on this machine only; uninstalled harnesses are hidden by default (`stats.showUninstalled: true` shows them). Workspace token badges are experimental.
 - **Trademarks**: OpenCode, Command Code, DeepSeek, ZCode, WorkBuddy, CodeBuddy, Qoder and other names are trademarks of their respective owners. This is an independent third-party project, not affiliated with or endorsed by them.
 
 ## Development
 
-Node.js ≥ 24, zero runtime dependencies: `node --test` runs the 277 tests.
+Node.js ≥ 24, zero runtime dependencies: `node --test` runs the 278 tests.
 
 Release: `node scripts/bump-version.mjs <version> "<note>"` updates `package.json`, `PLUGIN_VERSION` and `CHANGELOG.md`; see [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 

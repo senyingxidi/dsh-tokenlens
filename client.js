@@ -145,9 +145,10 @@ window.__ModuleLoader__.load({
       defaultScope: 'provider',
       detailsExpanded: 'auto',
       detailsWindow: 'total',
-      // 「启动时检查更新」 is persisted too; off by default so an old Host and a
-      // fresh install never contact the npm registry (privacy first).
-      updateCheck: false,
+      // 「启动时检查更新」 is persisted too. ON by default (v1.3.1) so users learn
+      // about new releases; switching it off keeps the plugin fully local-only.
+      // Every other value (an old Host omitting the field included) means ON.
+      updateCheck: true,
     }
     /** The npm package page the 「打开 npm」 update links point at. */
     const NPM_PACKAGE_URL = 'https://www.npmjs.com/package/dsh-tokenlens'
@@ -354,7 +355,7 @@ window.__ModuleLoader__.load({
       settingsResetDefaults: '恢复默认设置',
       settingsResetDefaultsHint: '恢复为插件默认的显示设置',
       updateCheckLabel: '启动时检查更新',
-      updateCheckHint: '仅当开启时才访问 npm registry 检查新版本；默认关闭',
+      updateCheckHint: '默认开启：开启时访问 npm registry 检查新版本；关闭后插件完全本地运行',
       updateCheckOff: '关闭',
       updateCheckOn: '开启',
       updateChecking: '正在检查…',
@@ -364,6 +365,11 @@ window.__ModuleLoader__.load({
       updateCheckNow: '立即检查',
       updateCheckNever: '尚未检查',
       updateOpenNpm: '打开 npm',
+      // The update status now lives on the plugin-version line of the dialog
+      // body (footer line removed); these two key the version-line suffix.
+      updateVersionNew: '有新版本 v{latest}',
+      updateVersionLatest: '已是最新版本',
+      // Kept for compatibility (the footer line is no longer rendered).
       updateDialogLine: '发现新版本 v{latest} · 打开 npm',
       providerBothLabels: '短标签：{short} · 全名：{full}',
       providerShortLabel: '短标签',
@@ -594,7 +600,7 @@ window.__ModuleLoader__.load({
       settingsResetDefaults: 'Restore defaults',
       settingsResetDefaultsHint: 'Restore the plugin default display settings',
       updateCheckLabel: 'Check for updates at startup',
-      updateCheckHint: 'Contacts the npm registry for a new version only when enabled; off by default',
+      updateCheckHint: 'On by default: contacts the npm registry to check for a new version; switch it off to keep the plugin fully local',
       updateCheckOff: 'Off',
       updateCheckOn: 'On',
       updateChecking: 'Checking…',
@@ -604,6 +610,11 @@ window.__ModuleLoader__.load({
       updateCheckNow: 'Check now',
       updateCheckNever: 'Not checked yet',
       updateOpenNpm: 'Open on npm',
+      // The update status now lives on the plugin-version line of the dialog
+      // body (footer line removed); these two key the version-line suffix.
+      updateVersionNew: 'New version v{latest}',
+      updateVersionLatest: 'Up to date',
+      // Kept for compatibility (the footer line is no longer rendered).
       updateDialogLine: 'New version v{latest} · Open on npm',
       providerBothLabels: 'Short label: {short} · Full name: {full}',
       providerShortLabel: 'Short label',
@@ -1160,9 +1171,10 @@ window.__ModuleLoader__.load({
         defaultScope: normalizeDisplayScope(source.defaultScope),
         detailsExpanded: normalizeDetailsExpanded(source.detailsExpanded),
         detailsWindow: normalizeDetailsWindow(source.detailsWindow),
-        // The startup update check is opt-in: a value other than `true` (an old
-        // Host omits the field entirely) means off.
-        updateCheck: source.updateCheck === true,
+        // The startup update check is ON by default (v1.3.1): only an explicit
+        // boolean is honored, so an old Host that omits the field stays on.
+        updateCheck:
+          typeof source.updateCheck === 'boolean' ? source.updateCheck : DEFAULT_PLUGIN_SETTINGS.updateCheck,
       }
     }
 
@@ -3238,7 +3250,11 @@ window.__ModuleLoader__.load({
 .dsh-tokenlens-chart-drill-title{color:var(--dsw-alias-label-secondary);font-size:var(--dsw-alias-font-size-sm,12px);line-height:1.4;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}
 /* 明细 donut window switch (v1.2.0): one pill row under the details title. */
 .dsh-tokenlens-details-window{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
-.dsh-tokenlens-version{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:1.5;text-align:right;opacity:.75}
+.dsh-tokenlens-version{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:1.5;text-align:right;opacity:.75;overflow-wrap:anywhere}
+/* Update status on the plugin-version line (dialog body): wraps on narrow screens. */
+.dsh-tokenlens-version-update{white-space:normal;overflow-wrap:anywhere}
+.dsh-tokenlens-version .dsh-tokenlens-update-link{color:inherit;font-size:inherit;vertical-align:baseline}
+.dsh-tokenlens-version .dsh-tokenlens-update-link .dsh-tokenlens-icon{margin-left:2px;vertical-align:-1px}
 .dsh-tokenlens-cards{gap:6px;flex-wrap:wrap;display:flex}
 .dsh-tokenlens-cards-caption{color:var(--dsw-alias-label-tertiary);font-size:var(--dsw-alias-font-size-sm,12px);line-height:1.4;margin-bottom:-3px}
 .dsh-tokenlens-harness-breakdown{display:flex;flex-direction:column;gap:4px}
@@ -6786,43 +6802,66 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * The usage dialog's 「发现新版本」 footer line, or null when the last check
-     * found no update (or never ran). The i18n sentence names 「打开 npm」 as its
-     * tail; that tail becomes the anchor that opens the npm package page, so the
-     * line itself stays a single sentence with one real link inside it.
+     * The update status appended to the plugin-version line of the usage dialog
+     * body, or null when it must stay silent.
+     *
+     * Rules (a check result only): an available release renders as
+     * 「 · 有新版本 vX」 with the version phrase linking to the npm page; a
+     * successful check without a newer release renders 「 · 已是最新版本」.
+     * No result, a failed check or an explicitly disabled setting adds nothing
+     * (never show a misleading status).
      */
-    function buildUpdateFooterLine(state, t) {
+    function buildVersionUpdateStatus(state, t) {
+      if (state.updateCheck !== true) return null
       const update = state.update
-      if (update === null || update.available !== true) return null
-      const text = t('updateDialogLine', { latest: update.latest })
-      const linkLabel = t('updateOpenNpm')
-      const packageUrl = updatePackageUrlOf(state)
-      const link = h(
-        'a',
-        {
-          key: 'link',
-          className: 'dsh-tokenlens-update-link dsh-tokenlens-update-footer-link',
-          'data-update-link': 'true',
-          href: packageUrl,
-          target: '_blank',
-          rel: 'noreferrer noopener',
-          title: packageUrl,
-          onClick: (event) => openConsole(packageUrl, event),
-        },
-        linkLabel,
-        Icon('external', 12),
-      )
-      const index = text.indexOf(linkLabel)
-      const children =
-        index < 0
-          ? [h('span', { key: 'text' }, text), h('span', { key: 'sep' }, ' · '), link]
-          : [h('span', { key: 'text' }, text.slice(0, index)), link]
-      return h(
-        'div',
-        { key: 'update-line', className: 'dsh-tokenlens-update-line', 'data-update-line': 'true' },
-        Icon('bolt', 12),
-        children,
-      )
+      if (update === null || update.error !== null) return null
+      if (update.available === true && update.latest !== null) {
+        const packageUrl = updatePackageUrlOf(state)
+        // The version NUMBER inside the sentence is the real npm link; the i18n
+        // sentence itself stays a single string (`updateVersionNew`).
+        const sentence = t('updateVersionNew', { latest: update.latest })
+        const versionText = `v${update.latest}`
+        const index = sentence.indexOf(versionText)
+        const link = h(
+          'a',
+          {
+            className: 'dsh-tokenlens-update-link dsh-tokenlens-version-link',
+            'data-update-link': 'true',
+            'data-update-version-link': 'true',
+            href: packageUrl,
+            target: '_blank',
+            rel: 'noreferrer noopener',
+            title: packageUrl,
+            onClick: (event) => openConsole(packageUrl, event),
+          },
+          index >= 0 ? versionText : `v${update.latest}`,
+          Icon('external', 12),
+        )
+        return h(
+          'span',
+          {
+            key: 'update-status',
+            className: 'dsh-tokenlens-version-update',
+            'data-update-version-status': 'available',
+          },
+          ' · ',
+          index >= 0 ? sentence.slice(0, index) : `${sentence} `,
+          link,
+        )
+      }
+      if (update.latest !== null) {
+        return h(
+          'span',
+          {
+            key: 'update-status',
+            className: 'dsh-tokenlens-version-update',
+            'data-update-version-status': 'latest',
+          },
+          ' · ',
+          t('updateVersionLatest'),
+        )
+      }
+      return null
     }
 
     /** The dialog contents (body + footer); may throw, the caller guards it. */
@@ -6856,6 +6895,9 @@ window.__ModuleLoader__.load({
             'div',
             { key: 'version', className: 'dsh-tokenlens-version' },
             t('pluginVersion', { version: state.pluginVersion }),
+            // Update status sits right next to the plugin version: 有新版本 vX
+            // (link to the npm page) or 已是最新版本, only for a successful check.
+            buildVersionUpdateStatus(state, t),
           ),
         )
       }
@@ -6884,9 +6926,6 @@ window.__ModuleLoader__.load({
               Icon('external', 12),
               consoleLabel,
             ),
-        // 「发现新版本」 line (only while an update is available): its 「打开 npm」
-        // tail is the real npm-package link, next to the refresh/close buttons.
-        buildUpdateFooterLine(state, t),
         h(
           Button,
           {

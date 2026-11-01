@@ -126,6 +126,8 @@ git push origin main --tags
 
 **外部贡献者不需要改版本号**：由维护者在发版时统一处理版本号与 CHANGELOG，避免每个 PR 互相冲突。
 
+**同一发布日合并**：一个发布日尽量只发布一个版本；若当天已有发布，后续小改动不再单独升版本，而是并入当天章节（见 `CHANGELOG.md` 顶部的「版本记录约定」）。这样日志按天规整，不会出现同日多个小版本号。
+
 ## Pull Request 要求
 
 - [ ] 本地 `node --test` 全绿（Node >= 24）
@@ -172,5 +174,5 @@ CI 通过后由维护者 review 合并。提出 PR 即表示你同意以 [MIT Li
 
 - Requires **Node.js >= 24** (uses `node:sqlite` and `node:zlib` zstd). The project has **zero runtime dependencies**: clone and run `node --test` directly, there is nothing to install.
 - Conventional Commits; 2-space indent, LF, UTF-8; no new dependencies; tests must be offline and deterministic.
-- Maintainers bump the version for every round of file changes with `node scripts/bump-version.mjs <x.y.z> "<note>"` (syncs `package.json`, `index.js#PLUGIN_VERSION` and `CHANGELOG.md`), then push a `v*` tag to publish with npm provenance. External contributors do not bump versions.
+- Maintainers bump the version with `node scripts/bump-version.mjs <x.y.z> "<note>"` (syncs `package.json`, `index.js#PLUGIN_VERSION` and `CHANGELOG.md`), then push a `v*` tag to publish with npm provenance. At most one release per day: later same-day changes are folded into that day's `CHANGELOG` section instead of a new version number. External contributors do not bump versions.
 - Never commit `.dev/`, `.refs/`, API keys, personal paths or unredacted usage data. See [SECURITY.md](SECURITY.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).

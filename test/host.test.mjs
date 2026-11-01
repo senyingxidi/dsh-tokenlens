@@ -9,6 +9,7 @@
  *                          browser half performs.
  */
 import assert from 'node:assert/strict'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -327,8 +328,25 @@ function harness(t, options = {}) {
   }
   if (options.credentials !== undefined) services.credentials = options.credentials
   if (options.services !== undefined) Object.assign(services, options.services)
+  // Isolated provider store by default: the real profile store must never leak
+  // into a test, and the v1.3.1 default-on update check must stay offline unless
+  // a test explicitly opts in (by providing an existing store file without
+  // `updateCheck`). A missing store file is seeded with `updateCheck: false`.
+  let storeFile = options.config?.providerStoreFile
+  if (typeof storeFile !== 'string' || storeFile === '') {
+    const dir = mkdtempSync(join(tmpdir(), 'tokenlens-harness-'))
+    t.after(() => rmSync(dir, { recursive: true, force: true }))
+    storeFile = join(dir, 'providers.json')
+  }
+  if (!existsSync(storeFile)) {
+    writeFileSync(
+      storeFile,
+      JSON.stringify({ version: 1, providers: {}, customProviders: {}, settings: { updateCheck: false } }),
+      { encoding: 'utf8', mode: 0o600 },
+    )
+  }
   // Token statistics walk the real session logs, so tests opt in explicitly.
-  apply(ctx, { statusFile: '', stats: { enabled: false }, ...options.config })
+  apply(ctx, { statusFile: '', stats: { enabled: false }, ...options.config, providerStoreFile: storeFile })
   return { ctx, captured, services, base }
 }
 
@@ -1334,7 +1352,7 @@ test('the optional update check compares the published npm version', async (t) =
 
   const list = await bridge(captured, { action: 'providers' })
   assert.deepEqual(list.body.update, result.body.update, 'the management payload carries the same result')
-  assert.equal(list.body.settings.updateCheck, false, 'checking does not enable the setting')
+  assert.equal(list.body.settings.updateCheck, false, 'a manual check never changes the setting')
 })
 
 test('a failed update check is reported, never thrown', async (t) => {
@@ -1359,6 +1377,12 @@ test('settingsUpdate toggles the optional update check and persists it', async (
   const dir = await mkdtemp(join(tmpdir(), 'tokenlens-update-setting-'))
   t.after(() => rm(dir, { recursive: true, force: true }))
   const storeFile = join(dir, 'providers.json')
+  // Start explicitly disabled so the off→on transition is what triggers the check.
+  await writeFile(
+    storeFile,
+    JSON.stringify({ version: 1, providers: {}, customProviders: {}, settings: { updateCheck: false } }),
+    'utf8',
+  )
   const { captured } = harness(t, {
     credentials: okCredentials,
     config: { minRefreshIntervalMs: 0, pollIntervalMs: 0, providerStoreFile: storeFile },
@@ -1395,9 +1419,16 @@ test('settingsUpdate toggles the optional update check and persists it', async (
 test('concurrent update checks share one in-flight registry request', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'tokenlens-update-concurrent-'))
   t.after(() => rm(dir, { recursive: true, force: true }))
+  const storeFile = join(dir, 'providers.json')
+  // Explicitly disabled so the startup check does not add a request here.
+  await writeFile(
+    storeFile,
+    JSON.stringify({ version: 1, providers: {}, customProviders: {}, settings: { updateCheck: false } }),
+    'utf8',
+  )
   const { captured } = harness(t, {
     credentials: okCredentials,
-    config: { minRefreshIntervalMs: 0, pollIntervalMs: 0, providerStoreFile: join(dir, 'providers.json') },
+    config: { minRefreshIntervalMs: 0, pollIntervalMs: 0, providerStoreFile: storeFile },
   })
   const calls = stubFetch(t, (call, url) =>
     String(url).includes('registry.npmjs.org') ? jsonResponse({ version: '99.2.0' }) : jsonResponse(LIVE_PAYLOAD),
@@ -1417,17 +1448,13 @@ test('concurrent update checks share one in-flight registry request', async (t) 
   )
 })
 
-test('the startup check runs only when the persisted setting enables it', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'tokenlens-update-startup-'))
+test('the startup check runs by default and can be disabled explicitly', async (t) => {
+  // Default (no persisted updateCheck): v1.3.1 checks once at activation.
+  const dir = await mkdtemp(join(tmpdir(), 'tokenlens-update-default-'))
   t.after(() => rm(dir, { recursive: true, force: true }))
   const storeFile = join(dir, 'providers.json')
-  await writeFile(
-    storeFile,
-    JSON.stringify({ version: 1, providers: {}, customProviders: {}, settings: { updateCheck: true } }),
-    'utf8',
-  )
-  // The startup check fires during activation, so the fetch stub must be ready
-  // before the harness mounts the plugin.
+  await writeFile(storeFile, JSON.stringify({ version: 1, providers: {}, customProviders: {}, settings: {} }), 'utf8')
+  // The startup check fires during activation, so the stub must be installed first.
   const calls = stubFetch(t, (call, url) =>
     String(url).includes('registry.npmjs.org') ? jsonResponse({ version: '99.5.0' }) : jsonResponse(LIVE_PAYLOAD),
   )
@@ -1439,24 +1466,33 @@ test('the startup check runs only when the persisted setting enables it', async 
   assert.equal(
     calls.some((call) => String(call.url).includes('registry.npmjs.org')),
     true,
-    'one startup registry request',
+    'one startup registry request by default',
   )
   const list = await bridge(captured, { action: 'providers' })
+  assert.equal(list.body.settings.updateCheck, true)
   assert.equal(list.body.update.available, true)
   assert.equal(list.body.update.latest, '99.5.0')
 })
 
-test('the update check stays off by default (no registry request)', async (t) => {
+test('an explicit updateCheck:false keeps the startup check silent', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'tokenlens-update-off-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const storeFile = join(dir, 'providers.json')
+  await writeFile(
+    storeFile,
+    JSON.stringify({ version: 1, providers: {}, customProviders: {}, settings: { updateCheck: false } }),
+    'utf8',
+  )
   const calls = stubFetch(t, () => jsonResponse(LIVE_PAYLOAD))
   const { captured } = harness(t, {
     credentials: okCredentials,
-    config: { minRefreshIntervalMs: 0, pollIntervalMs: 0 },
+    config: { minRefreshIntervalMs: 0, pollIntervalMs: 0, providerStoreFile: storeFile },
   })
   await new Promise((resolve) => setTimeout(resolve, 60))
   assert.equal(
     calls.some((call) => String(call.url).includes('registry.npmjs.org')),
     false,
-    'local-only unless enabled',
+    'the opt-out is honored',
   )
   const list = await bridge(captured, { action: 'providers' })
   assert.equal(list.body.update, null)

@@ -2990,7 +2990,7 @@ test('the chip shows the short label by default and the full label after 全名'
           defaultScope: 'provider',
           detailsExpanded: 'auto',
           detailsWindow: 'total',
-          updateCheck: false,
+          updateCheck: true,
         },
       },
       'choosing 全名 sends the FULL settings object',
@@ -3324,6 +3324,8 @@ test('the management page ships matching zh/en dictionary keys', () => {
       'updateCheckNever',
       'updateOpenNpm',
       'updateDialogLine',
+      'updateVersionNew',
+      'updateVersionLatest',
       'capacityTokenUsed',
       'capacityTokenEstimate',
       'capacityTokenNoEstimate',
@@ -3373,7 +3375,8 @@ test('the management page ships matching zh/en dictionary keys', () => {
     assert.equal(dictionary.en.settingsDefaultView, 'Default view')
     assert.equal(dictionary.zh.settingsResetDefaults, '恢复默认设置')
     assert.equal(dictionary.en.settingsResetDefaults, 'Restore defaults')
-    // 「启动时检查更新」 copy: the off/on toggle labels and the dialog sentence.
+    // 「启动时检查更新」 copy: the default-on toggle labels and the version-line
+    // update status (v1.3.1; the footer line is gone).
     assert.equal(dictionary.zh.updateCheckLabel, '启动时检查更新')
     assert.equal(dictionary.en.updateCheckLabel, 'Check for updates at startup')
     assert.equal(dictionary.zh.updateCheckOff, '关闭')
@@ -3382,10 +3385,17 @@ test('the management page ships matching zh/en dictionary keys', () => {
     assert.equal(dictionary.en.updateCheckOn, 'On')
     assert.equal(dictionary.zh.updateOpenNpm, '打开 npm')
     assert.equal(dictionary.en.updateOpenNpm, 'Open on npm')
+    assert.equal(dictionary.zh.updateVersionNew, '有新版本 v{latest}')
+    assert.equal(dictionary.en.updateVersionNew, 'New version v{latest}')
+    assert.equal(dictionary.zh.updateVersionLatest, '已是最新版本')
+    assert.equal(dictionary.en.updateVersionLatest, 'Up to date')
+    // The old footer sentence stays in the dictionary (unused after v1.3.1).
     assert.match(dictionary.zh.updateDialogLine, /发现新版本 v\{latest\}/)
     assert.match(dictionary.en.updateDialogLine, /New version v\{latest\}/)
     assert.match(dictionary.zh.updateCheckHint, /npm registry/)
     assert.match(dictionary.en.updateCheckHint, /npm registry/)
+    assert.match(dictionary.zh.updateCheckHint, /默认开启/, 'the privacy hint names the default-on behaviour')
+    assert.match(dictionary.en.updateCheckHint, /On by default/)
     assert.equal(dictionary.zh.statsChartTotal, '合计 {value}')
     assert.equal(dictionary.en.statsChartTotal, 'Total {value}')
     assert.match(dictionary.zh.statsChartPeak, /峰值 \{value\}（\{day\}）/)
@@ -5909,8 +5919,8 @@ test('插件设置 shows the current values and saves the FULL settings on every
       )
     }
 
-    // Every change sends the FULL five-field settings object (v1.2.1 adds the
-    // persisted 明细 donut window to the payload).
+    // Every change sends the FULL six-field settings object (v1.2.1 adds the
+    // persisted 明细 donut window; v1.3.1 the default-on update check).
     settingOptionOf(tree, 'defaultView', 'data').props.onClick()
     await settle()
     assert.deepEqual(lastCallWith(plugin, 'settingsUpdate'), {
@@ -5921,7 +5931,7 @@ test('插件设置 shows the current values and saves the FULL settings on every
         defaultScope: 'provider',
         detailsExpanded: 'auto',
         detailsWindow: 'last7Days',
-        updateCheck: false,
+        updateCheck: true,
       },
     })
     tree = renderDialog(plugin)
@@ -5937,7 +5947,7 @@ test('插件设置 shows the current values and saves the FULL settings on every
         defaultScope: 'all',
         detailsExpanded: 'auto',
         detailsWindow: 'last7Days',
-        updateCheck: false,
+        updateCheck: true,
       },
     })
 
@@ -5951,7 +5961,7 @@ test('插件设置 shows the current values and saves the FULL settings on every
         defaultScope: 'all',
         detailsExpanded: 'collapsed',
         detailsWindow: 'last7Days',
-        updateCheck: false,
+        updateCheck: true,
       },
     })
 
@@ -5965,7 +5975,7 @@ test('插件设置 shows the current values and saves the FULL settings on every
         defaultScope: 'all',
         detailsExpanded: 'collapsed',
         detailsWindow: 'last7Days',
-        updateCheck: false,
+        updateCheck: true,
       },
     })
     assert.equal(
@@ -6043,7 +6053,7 @@ test('插件设置 renders settingsUpdate errors and 恢复默认设置 sends th
     assert.equal(settingOptionOf(tree, 'defaultView', 'data').props.disabled, false, 'the selector is usable for a retry')
 
     // 「恢复默认设置」 sends the full Host defaults in one payload (v1.2.1: the
-    // persisted 明细 window is part of the defaults).
+    // persisted 明细 window is part of the defaults; v1.3.1: update check on).
     fail = false
     findElement(tree, (element) => element.props?.className === 'dsh-tokenlens-settings-reset').props.onClick()
     await settle()
@@ -6055,7 +6065,7 @@ test('插件设置 renders settingsUpdate errors and 恢复默认设置 sends th
         defaultScope: 'provider',
         detailsExpanded: 'auto',
         detailsWindow: 'total',
-        updateCheck: false,
+        updateCheck: true,
       },
     })
     tree = renderDialog(plugin)
@@ -7485,7 +7495,7 @@ test('an all-zero donut window keeps the readable empty hint', async () => {
 // 明细 window persistence (v1.2.1): the choice is saved to the plugin settings.
 // ---------------------------------------------------------------------------
 
-/** The five display defaults (+ the startup update check) this section's settings-aware Hosts start from. */
+/** The display defaults (+ the default-on startup update check) this section's settings-aware Hosts start from. */
 function persistedSettingsFixture(overrides = {}) {
   return {
     labelStyle: 'short',
@@ -7493,7 +7503,7 @@ function persistedSettingsFixture(overrides = {}) {
     defaultScope: 'provider',
     detailsExpanded: 'auto',
     detailsWindow: 'total',
-    updateCheck: false,
+    updateCheck: true,
     ...overrides,
   }
 }
@@ -7656,7 +7666,7 @@ test('a click during an in-flight settings save is retried once after 200ms', as
 })
 
 // ---------------------------------------------------------------------------
-// 「启动时检查更新」 UI (update check): settings block, status line, footer line.
+// 「启动时检查更新」 UI (update check): settings block, status line, version line.
 // ---------------------------------------------------------------------------
 
 /** One UpdateInfo object as the Host serves it (see the wire contract). */
@@ -7740,23 +7750,29 @@ function updateCheckNowOf(tree) {
   return findElement(tree, (element) => element.props?.['data-update-check-now'] === 'true')
 }
 
-/** The npm anchor of the status row or the dialog footer. */
+/** The npm anchor of the status row or the plugin-version line. */
 function updateNpmLinkOf(tree) {
   return findElement(tree, (element) => element.type === 'a' && element.props?.['data-update-link'] === 'true')
 }
 
-/** The footer's 「发现新版本」 line, or undefined when no update is available. */
-function updateFooterLineOf(tree) {
-  return findElement(tree, (element) => element.props?.['data-update-line'] === 'true')
+/** The plugin-version line of the usage dialog body. */
+function versionLineOf(tree) {
+  return findElement(tree, (element) => element.props?.className === 'dsh-tokenlens-version')
+}
+
+/** The update status appended to the plugin-version line, or undefined. */
+function versionUpdateOf(tree) {
+  return findElement(tree, (element) => element.props?.['data-update-version-status'] !== undefined)
 }
 
 test('插件设置 shows the update-check toggle and saves it with the rest of the settings', async () => {
-  const view = await renderUpdateTab({ settings: { updateCheck: true } })
+  const view = await renderUpdateTab()
   try {
     const section = updateSectionOf(view.tree)
     assert.ok(section, 'the 更新检查 block renders in 插件设置')
     assert.match(textOf(section), /启动时检查更新/, 'the toggle label is shown')
-    assert.match(textOf(section), /仅当开启时才访问 npm registry/, 'the privacy hint is shown')
+    assert.match(textOf(section), /默认开启/, 'the privacy hint names the default-on behaviour')
+    assert.match(textOf(section), /npm registry/, 'the privacy hint names the registry')
     assert.equal(updateCheckOptionOf(view.tree, true).props['data-active'], 'true', 'the persisted on state is active')
     assert.equal(updateCheckOptionOf(view.tree, false).props['data-active'], 'false')
     assert.equal(updateCheckOptionOf(view.tree, true).props.disabled, false, 'the toggle is not blocked by a check')
@@ -7789,9 +7805,40 @@ test('插件设置 shows the update-check toggle and saves it with the rest of t
   }
 })
 
+test('「启动时检查更新」 defaults to ON when the Host payload omits the field', async () => {
+  // providersFixture() carries no updateCheck at all, like an old Host payload:
+  // the client must fall back to the default (on), not to off.
+  const plugin = loadPlugin()
+  try {
+    const tree = await settleSettingsTab(plugin)
+    assert.equal(updateCheckOptionOf(tree, true).props['data-active'], 'true', 'an omitted field means ON')
+    assert.equal(updateCheckOptionOf(tree, false).props['data-active'], 'false')
+
+    // Explicitly switching it off is still honored and persisted with the full
+    // six-field settings object.
+    updateCheckOptionOf(tree, false).props.onClick()
+    await settle()
+    assert.deepEqual(lastCallWith(plugin, 'settingsUpdate'), {
+      action: 'settingsUpdate',
+      settings: {
+        labelStyle: 'short',
+        defaultView: 'chart',
+        defaultScope: 'provider',
+        detailsExpanded: 'auto',
+        detailsWindow: 'total',
+        updateCheck: false,
+      },
+    })
+    const updated = renderDialog(plugin)
+    assert.equal(updateCheckOptionOf(updated, false).props['data-active'], 'true', 'the answered off state is adopted')
+  } finally {
+    plugin.dispose()
+  }
+})
+
 test('the 更新检查 status line covers never / available / up-to-date / failed / checking', async () => {
-  // No result yet: 尚未检查.
-  let view = await renderUpdateTab()
+  // No result yet: 尚未检查. The setting is off so no silent check starts.
+  let view = await renderUpdateTab({ settings: { updateCheck: false } })
   try {
     const status = updateStatusOf(view.tree)
     assert.equal(status.props['data-update-status'], 'never', 'no update result means the never branch')
@@ -7857,8 +7904,10 @@ test('the 更新检查 status line covers never / available / up-to-date / faile
   }
 
   // An in-flight check: 正在检查 and a disabled button until the answer lands.
+  // The setting is off so the management page does not start its own check.
   let resolveCheck
   view = await renderUpdateTab({
+    settings: { updateCheck: false },
     answerUpdateCheck: () => new Promise((resolve) => {
       resolveCheck = resolve
     }),
@@ -7880,7 +7929,11 @@ test('the 更新检查 status line covers never / available / up-to-date / faile
 })
 
 test('「立即检查」 calls the updateCheck bridge action and adopts the answer', async () => {
-  const view = await renderUpdateTab({ answerUpdateCheck: () => ({ ok: true, update: updateInfoFixture() }) })
+  // The setting is off so the only updateCheck call is the one this test clicks.
+  const view = await renderUpdateTab({
+    settings: { updateCheck: false },
+    answerUpdateCheck: () => ({ ok: true, update: updateInfoFixture() }),
+  })
   try {
     assert.equal(updateStatusOf(view.tree).props['data-update-status'], 'never')
     updateCheckNowOf(view.tree).props.onClick()
@@ -7898,6 +7951,8 @@ test('「立即检查」 calls the updateCheck bridge action and adopts the answ
 test('a failed 「立即检查」 shows the existing management error and keeps the last result', async () => {
   let fail = true
   const view = await renderUpdateTab({
+    // The setting is off so the click is the only updateCheck call.
+    settings: { updateCheck: false },
     answerUpdateCheck: () =>
       fail
         ? {
@@ -7984,7 +8039,7 @@ test('a startup result that lands after hello is read by one delayed providers r
   })
   try {
     let tree = await settleDialog(plugin, 'opencode-go')
-    assert.equal(updateFooterLineOf(tree), undefined, 'the first bootstrap answered before the result existed')
+    assert.equal(versionUpdateOf(tree), undefined, 'the first bootstrap answered before the result existed')
 
     // The Host's own startup check finishes after hello + bootstrap.
     hostUpdate = updateInfoFixture()
@@ -7993,7 +8048,11 @@ test('a startup result that lands after hello is read by one delayed providers r
     refresh.fn()
     await settle()
     tree = await settleDialog(plugin, 'opencode-go')
-    assert.ok(updateFooterLineOf(tree), 'the delayed refresh surfaces the footer line without the management page')
+    assert.equal(
+      versionUpdateOf(tree).props['data-update-version-status'],
+      'available',
+      'the delayed refresh surfaces the version-line status without the management page',
+    )
   } finally {
     plugin.dispose()
   }
@@ -8050,8 +8109,8 @@ test('turning the startup check on surfaces the Host result shortly after, witho
   }
 })
 
-test('the management page runs ONE silent check when the startup setting is on', async () => {
-  const view = loadUpdatePlugin({ settings: { updateCheck: true } })
+test('the management page runs ONE silent check while the default-on setting is enabled', async () => {
+  const view = loadUpdatePlugin() // default: 「启动时检查更新」 is ON
   try {
     let tree = await settleSettingsTab(view.plugin)
     assert.equal(view.updateCheckCalls.length, 1, 'opening the page checks once')
@@ -8082,68 +8141,93 @@ test('the management page runs ONE silent check when the startup setting is on',
   }
 })
 
-test('the dialog footer shows 「发现新版本」 only while an update is available', async () => {
-  // A hello envelope with an available update: the footer line + npm link.
+test('the plugin version line shows the update status (available / up to date / silent)', async () => {
+  // An available release: 「 · 有新版本 vX」 next to the version, the phrase is a
+  // real link to the npm page.
   const available = loadUpdatePlugin({ helloUpdate: updateInfoFixture() })
   try {
     const tree = await settleDialog(available.plugin, 'opencode-go')
-    const line = updateFooterLineOf(tree)
-    assert.ok(line, 'the footer update line renders')
-    assert.match(textOf(line), /发现新版本 v1\.4\.0/)
-    assert.match(textOf(line), /打开 npm/)
-    const link = updateNpmLinkOf(line)
-    assert.ok(link, 'the 「打开 npm」 tail is the footer link')
-    assert.match(textOf(link), /^打开 npm/, 'the link text is the localized npm action')
+    const line = versionLineOf(tree)
+    assert.ok(line, 'the plugin-version line renders')
+    assert.match(textOf(line), /插件 v1\.3\.0/, 'the plugin version comes from the hello envelope')
+    assert.match(textOf(line), /有新版本 v1\.4\.0/, 'the available version is appended to the version line')
+    const status = versionUpdateOf(tree)
+    assert.equal(status.props['data-update-version-status'], 'available')
+    const link = updateNpmLinkOf(status)
+    assert.ok(link, 'the new version number is a real link')
+    assert.match(textOf(link), /^v1\.4\.0/, 'the version number itself is the link text')
     assert.equal(link.props.href, NPM_PACKAGE_PAGE)
     assert.equal(link.props.target, '_blank')
     assert.match(String(link.props.rel), /noreferrer/)
+    // The old footer line is gone (v1.3.1 moved the status to the version line).
+    assert.equal(
+      findElement(tree, (element) => element.props?.['data-update-line'] === 'true'),
+      undefined,
+      'the footer no longer repeats the update',
+    )
 
-    // The en copy keeps the same sentence / link split (the link phrase is not
-    // printed twice: once as body text and once as the anchor).
+    // The en copy renders the same version-line status.
     const enT = translatorOf(available.plugin.dictionaries['dsh-tokenlens'].en)
-    const enLine = updateFooterLineOf(dialogOf(available.plugin).component({ sessionId: 'session-1', t: enT }))
-    assert.ok(enLine, 'the en footer line renders')
+    const enLine = versionLineOf(dialogOf(available.plugin).component({ sessionId: 'session-1', t: enT }))
+    assert.match(textOf(enLine), /Plugin v1\.3\.0/)
     assert.match(textOf(enLine), /New version v1\.4\.0/)
-    assert.equal((textOf(enLine).match(/Open on npm/g) ?? []).length, 1, 'the npm action appears once')
   } finally {
     available.plugin.dispose()
   }
 
-  // Up to date: no footer line.
+  // Up to date: 「 · 已是最新版本」, no link.
   const upToDate = loadUpdatePlugin({ helloUpdate: updateInfoFixture({ latest: '1.3.0', available: false }) })
   try {
     const tree = await settleDialog(upToDate.plugin, 'opencode-go')
-    assert.equal(updateFooterLineOf(tree), undefined, 'an up-to-date result adds no footer line')
+    assert.equal(versionUpdateOf(tree).props['data-update-version-status'], 'latest')
+    assert.match(textOf(versionLineOf(tree)), /已是最新版本/)
+    assert.equal(updateNpmLinkOf(tree), undefined, 'an up-to-date result adds no link')
   } finally {
     upToDate.plugin.dispose()
   }
 
-  // No update info at all: no footer line, no crash.
+  // A failed check shows nothing (never a misleading status).
+  const failed = loadUpdatePlugin({
+    helloUpdate: updateInfoFixture({
+      latest: null,
+      available: false,
+      error: { code: 'network', message: 'registry unreachable', retryable: true },
+    }),
+  })
+  try {
+    const tree = await settleDialog(failed.plugin, 'opencode-go')
+    assert.equal(versionUpdateOf(tree), undefined, 'a check error adds no version status')
+  } finally {
+    failed.plugin.dispose()
+  }
+
+  // No result at all (old Host / not checked yet): nothing, no crash.
   const none = loadPlugin()
   try {
     const tree = await settleDialog(none, 'opencode-go')
-    assert.equal(updateFooterLineOf(tree), undefined, 'an old Host without update adds no footer line')
+    assert.equal(versionUpdateOf(tree), undefined, 'no update result adds no version status')
   } finally {
     none.dispose()
   }
 
-  // A providers payload carrying the result also feeds the footer (bootstrap).
-  const fromProviders = loadUpdatePlugin({ providersUpdate: updateInfoFixture() })
+  // The user explicitly disabled the setting: stay silent even with a result.
+  const disabled = loadUpdatePlugin({ helloUpdate: updateInfoFixture(), settings: { updateCheck: false } })
   try {
-    const tree = await settleDialog(fromProviders.plugin, 'opencode-go')
-    assert.ok(updateFooterLineOf(tree), 'the providers payload result reaches the footer too')
+    const tree = await settleDialog(disabled.plugin, 'opencode-go')
+    assert.equal(versionUpdateOf(tree), undefined, 'a disabled setting hides the version status')
   } finally {
-    fromProviders.plugin.dispose()
+    disabled.plugin.dispose()
   }
 
-  // The Host may advertise the npm page its links should open.
+  // A providers payload carrying the result also feeds the version line, and the
+  // Host-advertised npm page wins for the link.
   const advertised = loadUpdatePlugin({
     providersUpdate: updateInfoFixture(),
     updatePackageUrl: 'https://npm.example.test/dsh-tokenlens',
   })
   try {
     const tree = await settleDialog(advertised.plugin, 'opencode-go')
-    const link = updateNpmLinkOf(updateFooterLineOf(tree))
+    const link = updateNpmLinkOf(versionUpdateOf(tree))
     assert.equal(link.props.href, 'https://npm.example.test/dsh-tokenlens', 'the advertised npm page wins')
   } finally {
     advertised.plugin.dispose()

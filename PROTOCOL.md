@@ -335,17 +335,17 @@ The dialog 「供应商管理」 page talks to three additional actions:
   saves enabled/consoleUrl/label/shortLabel. Overrides are persisted atomically to
   `$DSH_HOME/dsh-tokenlens/providers.json` (plugin-owned, not the profile patch); the same file also
 - `{action:"providerTest", providerId}` → the normal snapshot envelope (`{ok,snapshot}` or `{ok:false,error}`), forcing one upstream read.
-- `{action:"settingsUpdate", settings:{labelStyle?:"short"|"full", defaultView?:"chart"|"data", defaultScope?:"provider"|"all", detailsExpanded?:"auto"|"expanded"|"collapsed", detailsWindow?:"today"|"last7Days"|"second"|"total", updateCheck?:boolean}}` → the same providers payload; every field is optional and persisted in the store (`settings.*`). `labelStyle` controls whether the composer chip shows each provider's `shortLabel` or full `label`; `defaultView` / `defaultScope` / `detailsExpanded` are the usage-dialog defaults; `detailsWindow` (v1.2.1) is the remembered 明细 donut window (falls back visually to `total` when that window is unavailable on the current provider/host); `updateCheck` (v1.3.0, default `false`) enables the optional startup update check — enabling it runs one check immediately. Invalid values answer `unsupported-provider`.
+- `{action:"settingsUpdate", settings:{labelStyle?:"short"|"full", defaultView?:"chart"|"data", defaultScope?:"provider"|"all", detailsExpanded?:"auto"|"expanded"|"collapsed", detailsWindow?:"today"|"last7Days"|"second"|"total", updateCheck?:boolean}}` → the same providers payload; every field is optional and persisted in the store (`settings.*`). `labelStyle` controls whether the composer chip shows each provider's `shortLabel` or full `label`; `defaultView` / `defaultScope` / `detailsExpanded` are the usage-dialog defaults; `detailsWindow` (v1.2.1) is the remembered 明细 donut window (falls back visually to `total` when that window is unavailable on the current provider/host); `updateCheck` (v1.3.0, default `true` since v1.3.1) enables the startup update check — the off→on transition runs one check immediately. Invalid values answer `unsupported-provider`.
 
-### Optional update check (v1.3.0)
+### Update check (v1.3.0, on by default since v1.3.1)
 
-Off by default: the plugin stays local-only unless the user enables
-`settings.updateCheck`. When enabled, one HTTPS `GET` to the fixed endpoint
-`https://registry.npmjs.org/dsh-tokenlens/latest` runs at activation, on the
-off→on transition of the setting, and on the `updateCheck` action. Concurrent
-checks are single-flight (one registry request shared by every caller). Nothing
-but the request itself leaves the machine — no credentials, identifiers or
-usage data.
+On by default: at activation the Host makes one HTTPS `GET` to the fixed endpoint
+`https://registry.npmjs.org/dsh-tokenlens/latest`; the same request also runs on
+the off→on transition of `settings.updateCheck` and on the `updateCheck` action.
+Users can switch it off (`settings.updateCheck: false`) to keep the plugin fully
+local-only. Concurrent checks are single-flight (one registry request shared by
+every caller). Nothing but the request itself leaves the machine — no
+credentials, identifiers or usage data.
 
 ```jsonc
 // UpdateInfo (host → client)

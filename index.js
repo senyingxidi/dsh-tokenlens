@@ -74,7 +74,7 @@ export const inject = []
 export const PLUGIN_NAME = 'dsh-tokenlens'
 
 /** Plugin version; mirrors package.json (kept here so diagnostics need no fs read). */
-export const PLUGIN_VERSION = '1.3.0'
+export const PLUGIN_VERSION = '1.3.1'
 
 /** Documented defaults; every field of the raw row config is optional. */
 const DEFAULTS = {
@@ -1846,9 +1846,9 @@ export function apply(ctx, rawConfig) {
   }
 
   noteStatus('activate', { pollIntervalMs: config.pollIntervalMs })
-  // Optional startup update check: one plain npm-registry request, only when the
-  // user enabled `settings.updateCheck`. Off by default to keep the plugin
-  // local-only; failures are recorded and never break activation.
+  // Startup update check: one plain npm-registry request unless the user turned
+  // `settings.updateCheck` off (default on since v1.3.1). Failures are recorded
+  // and never break activation.
   if (sanitizeSettings(providerStore.settings).updateCheck === true) {
     void runUpdateCheck()
   }
