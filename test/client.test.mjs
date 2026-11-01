@@ -2990,6 +2990,7 @@ test('the chip shows the short label by default and the full label after 全名'
           defaultScope: 'provider',
           detailsExpanded: 'auto',
           detailsWindow: 'total',
+          updateCheck: false,
         },
       },
       'choosing 全名 sends the FULL settings object',
@@ -3311,6 +3312,18 @@ test('the management page ships matching zh/en dictionary keys', () => {
       'settingsDetailsCollapsed',
       'settingsResetDefaults',
       'settingsResetDefaultsHint',
+      'updateCheckLabel',
+      'updateCheckHint',
+      'updateCheckOff',
+      'updateCheckOn',
+      'updateChecking',
+      'updateLatest',
+      'updateAvailable',
+      'updateCheckFailed',
+      'updateCheckNow',
+      'updateCheckNever',
+      'updateOpenNpm',
+      'updateDialogLine',
       'capacityTokenUsed',
       'capacityTokenEstimate',
       'capacityTokenNoEstimate',
@@ -3360,6 +3373,19 @@ test('the management page ships matching zh/en dictionary keys', () => {
     assert.equal(dictionary.en.settingsDefaultView, 'Default view')
     assert.equal(dictionary.zh.settingsResetDefaults, '恢复默认设置')
     assert.equal(dictionary.en.settingsResetDefaults, 'Restore defaults')
+    // 「启动时检查更新」 copy: the off/on toggle labels and the dialog sentence.
+    assert.equal(dictionary.zh.updateCheckLabel, '启动时检查更新')
+    assert.equal(dictionary.en.updateCheckLabel, 'Check for updates at startup')
+    assert.equal(dictionary.zh.updateCheckOff, '关闭')
+    assert.equal(dictionary.zh.updateCheckOn, '开启')
+    assert.equal(dictionary.en.updateCheckOff, 'Off')
+    assert.equal(dictionary.en.updateCheckOn, 'On')
+    assert.equal(dictionary.zh.updateOpenNpm, '打开 npm')
+    assert.equal(dictionary.en.updateOpenNpm, 'Open on npm')
+    assert.match(dictionary.zh.updateDialogLine, /发现新版本 v\{latest\}/)
+    assert.match(dictionary.en.updateDialogLine, /New version v\{latest\}/)
+    assert.match(dictionary.zh.updateCheckHint, /npm registry/)
+    assert.match(dictionary.en.updateCheckHint, /npm registry/)
     assert.equal(dictionary.zh.statsChartTotal, '合计 {value}')
     assert.equal(dictionary.en.statsChartTotal, 'Total {value}')
     assert.match(dictionary.zh.statsChartPeak, /峰值 \{value\}（\{day\}）/)
@@ -5895,6 +5921,7 @@ test('插件设置 shows the current values and saves the FULL settings on every
         defaultScope: 'provider',
         detailsExpanded: 'auto',
         detailsWindow: 'last7Days',
+        updateCheck: false,
       },
     })
     tree = renderDialog(plugin)
@@ -5910,6 +5937,7 @@ test('插件设置 shows the current values and saves the FULL settings on every
         defaultScope: 'all',
         detailsExpanded: 'auto',
         detailsWindow: 'last7Days',
+        updateCheck: false,
       },
     })
 
@@ -5923,6 +5951,7 @@ test('插件设置 shows the current values and saves the FULL settings on every
         defaultScope: 'all',
         detailsExpanded: 'collapsed',
         detailsWindow: 'last7Days',
+        updateCheck: false,
       },
     })
 
@@ -5936,6 +5965,7 @@ test('插件设置 shows the current values and saves the FULL settings on every
         defaultScope: 'all',
         detailsExpanded: 'collapsed',
         detailsWindow: 'last7Days',
+        updateCheck: false,
       },
     })
     assert.equal(
@@ -6025,6 +6055,7 @@ test('插件设置 renders settingsUpdate errors and 恢复默认设置 sends th
         defaultScope: 'provider',
         detailsExpanded: 'auto',
         detailsWindow: 'total',
+        updateCheck: false,
       },
     })
     tree = renderDialog(plugin)
@@ -7454,7 +7485,7 @@ test('an all-zero donut window keeps the readable empty hint', async () => {
 // 明细 window persistence (v1.2.1): the choice is saved to the plugin settings.
 // ---------------------------------------------------------------------------
 
-/** The five display defaults this section's settings-aware Hosts start from. */
+/** The five display defaults (+ the startup update check) this section's settings-aware Hosts start from. */
 function persistedSettingsFixture(overrides = {}) {
   return {
     labelStyle: 'short',
@@ -7462,6 +7493,7 @@ function persistedSettingsFixture(overrides = {}) {
     defaultScope: 'provider',
     detailsExpanded: 'auto',
     detailsWindow: 'total',
+    updateCheck: false,
     ...overrides,
   }
 }
@@ -7622,4 +7654,500 @@ test('a click during an in-flight settings save is retried once after 200ms', as
     plugin.dispose()
   }
 })
+
+// ---------------------------------------------------------------------------
+// 「启动时检查更新」 UI (update check): settings block, status line, footer line.
+// ---------------------------------------------------------------------------
+
+/** One UpdateInfo object as the Host serves it (see the wire contract). */
+function updateInfoFixture(overrides = {}) {
+  return {
+    current: '1.3.0',
+    latest: '1.4.0',
+    available: true,
+    checkedAt: '2026-11-02T03:00:00.000Z',
+    error: null,
+    ...overrides,
+  }
+}
+
+/** The npm package page every update link must point at. */
+const NPM_PACKAGE_PAGE = 'https://www.npmjs.com/package/dsh-tokenlens'
+
+/**
+ * A Host whose settings persist across requests, whose `providers` payload may
+ * carry a last `update` result, and whose `updateCheck` answers `answerUpdateCheck`
+ * (an envelope, or a promise for the in-flight state). Every check call is kept
+ * in `updateCheckCalls` for assertions.
+ */
+function loadUpdatePlugin(options = {}) {
+  const state = { settings: { ...persistedSettingsFixture(), ...(options.settings ?? {}) } }
+  const updateCheckCalls = []
+  const plugin = loadPlugin(async (payload) => {
+    if (payload.action === 'hello') {
+      const hello = { ok: true, version: '1.3.0' }
+      if (options.helloUpdate !== undefined) hello.update = options.helloUpdate
+      return hello
+    }
+    if (payload.action === 'stats') return { ok: true, stats: statsFixture() }
+    if (payload.action === 'providers') {
+      const answer = providersFixture({ settings: state.settings })
+      if (options.providersUpdate !== undefined) answer.update = options.providersUpdate
+      if (options.updatePackageUrl !== undefined) answer.updatePackageUrl = options.updatePackageUrl
+      return answer
+    }
+    if (payload.action === 'settingsUpdate') {
+      state.settings = { ...state.settings, ...payload.settings }
+      return providersFixture({ settings: state.settings })
+    }
+    if (payload.action === 'updateCheck') {
+      updateCheckCalls.push(payload)
+      if (typeof options.answerUpdateCheck === 'function') return options.answerUpdateCheck(payload, state)
+      return { ok: true, update: updateInfoFixture() }
+    }
+    return { ok: true, snapshot: snapshotFixture(payload.providerId) }
+  })
+  return { plugin, state, updateCheckCalls }
+}
+
+/** Load a Host and render the 插件设置 tab (the update block lives there). */
+async function renderUpdateTab(options = {}) {
+  const context = loadUpdatePlugin(options)
+  const tree = await settleSettingsTab(context.plugin)
+  return { ...context, tree }
+}
+
+/** The 「更新检查」 block of the 插件设置 tab. */
+function updateSectionOf(tree) {
+  return findElement(tree, (element) => element.props?.['data-update-section'] === 'true')
+}
+
+/** One off/on option of the updateCheck settings row (`data-value` is stringified). */
+function updateCheckOptionOf(tree, on) {
+  return findElement(
+    tree,
+    (element) => element.props?.['data-setting'] === 'updateCheck' && element.props?.['data-value'] === String(on),
+  )
+}
+
+/** The last-check status line; its `data-update-status` names the branch. */
+function updateStatusOf(tree) {
+  return findElement(tree, (element) => element.props?.['data-update-status'] !== undefined)
+}
+
+/** The 「立即检查」 button of the 更新检查 block. */
+function updateCheckNowOf(tree) {
+  return findElement(tree, (element) => element.props?.['data-update-check-now'] === 'true')
+}
+
+/** The npm anchor of the status row or the dialog footer. */
+function updateNpmLinkOf(tree) {
+  return findElement(tree, (element) => element.type === 'a' && element.props?.['data-update-link'] === 'true')
+}
+
+/** The footer's 「发现新版本」 line, or undefined when no update is available. */
+function updateFooterLineOf(tree) {
+  return findElement(tree, (element) => element.props?.['data-update-line'] === 'true')
+}
+
+test('插件设置 shows the update-check toggle and saves it with the rest of the settings', async () => {
+  const view = await renderUpdateTab({ settings: { updateCheck: true } })
+  try {
+    const section = updateSectionOf(view.tree)
+    assert.ok(section, 'the 更新检查 block renders in 插件设置')
+    assert.match(textOf(section), /启动时检查更新/, 'the toggle label is shown')
+    assert.match(textOf(section), /仅当开启时才访问 npm registry/, 'the privacy hint is shown')
+    assert.equal(updateCheckOptionOf(view.tree, true).props['data-active'], 'true', 'the persisted on state is active')
+    assert.equal(updateCheckOptionOf(view.tree, false).props['data-active'], 'false')
+    assert.equal(updateCheckOptionOf(view.tree, true).props.disabled, false, 'the toggle is not blocked by a check')
+
+    // 关闭 saves the FULL settings object (the other five fields included).
+    updateCheckOptionOf(view.tree, false).props.onClick()
+    await settle()
+    assert.deepEqual(lastCallWith(view.plugin, 'settingsUpdate'), {
+      action: 'settingsUpdate',
+      settings: {
+        labelStyle: 'short',
+        defaultView: 'chart',
+        defaultScope: 'provider',
+        detailsExpanded: 'auto',
+        detailsWindow: 'total',
+        updateCheck: false,
+      },
+    })
+    let tree = renderDialog(view.plugin)
+    assert.equal(updateCheckOptionOf(tree, false).props['data-active'], 'true', 'the answered off state is adopted')
+
+    // 开启 saves true without waiting for the silent check.
+    updateCheckOptionOf(tree, true).props.onClick()
+    await settle()
+    assert.equal(lastCallWith(view.plugin, 'settingsUpdate').settings.updateCheck, true)
+    tree = renderDialog(view.plugin)
+    assert.equal(updateCheckOptionOf(tree, true).props['data-active'], 'true')
+  } finally {
+    view.plugin.dispose()
+  }
+})
+
+test('the 更新检查 status line covers never / available / up-to-date / failed / checking', async () => {
+  // No result yet: 尚未检查.
+  let view = await renderUpdateTab()
+  try {
+    const status = updateStatusOf(view.tree)
+    assert.equal(status.props['data-update-status'], 'never', 'no update result means the never branch')
+    assert.match(textOf(status), /尚未检查/)
+    assert.equal(updateNpmLinkOf(status), undefined, 'no npm link without an available version')
+  } finally {
+    view.plugin.dispose()
+  }
+
+  // An available update: the version sentence plus the npm link.
+  view = await renderUpdateTab({ providersUpdate: updateInfoFixture() })
+  try {
+    const status = updateStatusOf(view.tree)
+    assert.equal(status.props['data-update-status'], 'available')
+    assert.match(textOf(status), /发现新版本 v1\.4\.0（当前 v1\.3\.0）/)
+    const link = updateNpmLinkOf(status)
+    assert.ok(link, 'the npm link renders next to an available update')
+    assert.equal(link.props.href, NPM_PACKAGE_PAGE)
+    assert.equal(link.props.target, '_blank')
+    assert.match(String(link.props.rel), /noreferrer/)
+    assert.match(textOf(link), /打开 npm/)
+  } finally {
+    view.plugin.dispose()
+  }
+
+  // latest <= current: 已是最新版本.
+  view = await renderUpdateTab({
+    providersUpdate: updateInfoFixture({ latest: '1.3.0', available: false }),
+  })
+  try {
+    const status = updateStatusOf(view.tree)
+    assert.equal(status.props['data-update-status'], 'latest')
+    assert.match(textOf(status), /已是最新版本 v1\.3\.0/)
+    assert.equal(updateNpmLinkOf(status), undefined)
+  } finally {
+    view.plugin.dispose()
+  }
+
+  // A check that failed inside the Host: 检查失败 (retryable ⇒ 重试).
+  view = await renderUpdateTab({
+    providersUpdate: updateInfoFixture({
+      latest: null,
+      available: false,
+      error: { code: 'network', message: 'registry unreachable', retryable: true },
+    }),
+  })
+  try {
+    const status = updateStatusOf(view.tree)
+    assert.equal(status.props['data-update-status'], 'error')
+    assert.match(textOf(status), /检查失败/)
+    assert.ok(findElement(status, (element) => element.props?.['data-update-retry'] === 'true'), 'a retryable failure offers 重试')
+    assert.equal(updateCheckNowOf(view.tree).props.disabled, false, 'the failure leaves 立即检查 usable')
+  } finally {
+    view.plugin.dispose()
+  }
+
+  // Defensive normalization: a version-less / hostile update never claims one.
+  view = await renderUpdateTab({ providersUpdate: { available: true, current: 42, latest: {} } })
+  try {
+    assert.equal(updateStatusOf(view.tree).props['data-update-status'], 'never')
+  } finally {
+    view.plugin.dispose()
+  }
+
+  // An in-flight check: 正在检查 and a disabled button until the answer lands.
+  let resolveCheck
+  view = await renderUpdateTab({
+    answerUpdateCheck: () => new Promise((resolve) => {
+      resolveCheck = resolve
+    }),
+  })
+  try {
+    updateCheckNowOf(view.tree).props.onClick()
+    let checkingTree = renderDialog(view.plugin)
+    const checking = updateStatusOf(checkingTree)
+    assert.equal(checking.props['data-update-status'], 'checking')
+    assert.match(textOf(checking), /正在检查/)
+    assert.equal(updateCheckNowOf(checkingTree).props.disabled, true, 'the button is disabled while checking')
+    resolveCheck({ ok: true, update: updateInfoFixture() })
+    await settle()
+    checkingTree = renderDialog(view.plugin)
+    assert.equal(updateStatusOf(checkingTree).props['data-update-status'], 'available', 'the answer replaces the checking state')
+  } finally {
+    view.plugin.dispose()
+  }
+})
+
+test('「立即检查」 calls the updateCheck bridge action and adopts the answer', async () => {
+  const view = await renderUpdateTab({ answerUpdateCheck: () => ({ ok: true, update: updateInfoFixture() }) })
+  try {
+    assert.equal(updateStatusOf(view.tree).props['data-update-status'], 'never')
+    updateCheckNowOf(view.tree).props.onClick()
+    await settle()
+    assert.deepEqual(view.updateCheckCalls, [{ action: 'updateCheck' }], 'one updateCheck bridge call')
+    const tree = renderDialog(view.plugin)
+    const status = updateStatusOf(tree)
+    assert.equal(status.props['data-update-status'], 'available', 'the answered update is adopted')
+    assert.match(textOf(status), /发现新版本 v1\.4\.0/)
+  } finally {
+    view.plugin.dispose()
+  }
+})
+
+test('a failed 「立即检查」 shows the existing management error and keeps the last result', async () => {
+  let fail = true
+  const view = await renderUpdateTab({
+    answerUpdateCheck: () =>
+      fail
+        ? {
+            __httpStatus: 500,
+            __body: {
+              ok: false,
+              error: { code: 'http', message: 'registry returned 503', retryable: true },
+            },
+          }
+        : { ok: true, update: updateInfoFixture() },
+  })
+  try {
+    updateCheckNowOf(view.tree).props.onClick()
+    await settle()
+    let tree = renderDialog(view.plugin)
+    const error = findElement(tree, (element) => element.props?.['data-settings-error'] === 'true')
+    assert.ok(error, 'the management error banner renders')
+    assert.match(textOf(error), /用量服务返回了错误/, 'the wire error is localized')
+    assert.match(textOf(error), /registry returned 503/, 'the Host message is shown')
+    assert.equal(updateStatusOf(tree).props['data-update-status'], 'never', 'the failed call does not invent a result')
+    assert.equal(updateCheckNowOf(tree).props.disabled, false, 'the button is usable for a retry')
+
+    // A successful retry retires the stale banner and paints the result.
+    fail = false
+    updateCheckNowOf(tree).props.onClick()
+    await settle()
+    tree = renderDialog(view.plugin)
+    assert.equal(
+      findElement(tree, (element) => element.props?.['data-settings-error'] === 'true'),
+      undefined,
+      'a successful retry clears the check-failure banner',
+    )
+    assert.equal(updateStatusOf(tree).props['data-update-status'], 'available')
+  } finally {
+    view.plugin.dispose()
+  }
+})
+
+test('an in-flight Host check answered as update:null is retried once instead of erroring', async () => {
+  let calls = 0
+  const view = loadUpdatePlugin({
+    settings: { updateCheck: true },
+    answerUpdateCheck: () => {
+      calls += 1
+      // The Host's first-ever check is still running: its single-flight answers
+      // the last result (null) immediately.
+      return calls === 1 ? { ok: true, update: null } : { ok: true, update: updateInfoFixture() }
+    },
+  })
+  try {
+    const tree = await settleSettingsTab(view.plugin)
+    assert.equal(view.updateCheckCalls.length, 1)
+    assert.equal(
+      findElement(tree, (element) => element.props?.['data-settings-error'] === 'true'),
+      undefined,
+      'a null answer is not reported as a malformed response',
+    )
+    assert.equal(updateStatusOf(tree).props['data-update-status'], 'checking', 'the check stays in flight')
+
+    // The one delayed retry resolves it without a second user action. (The
+    // startup result-refresh timer shares the 1200ms delay; the check retry is
+    // armed later, so take the last one.)
+    const retries = view.plugin.timeouts.filter((timeout) => timeout.ms === 1200)
+    assert.ok(retries.length >= 1, 'a single delayed retry is armed')
+    retries[retries.length - 1].fn()
+    await settle()
+    assert.equal(view.updateCheckCalls.length, 2, 'exactly one retry')
+    const done = renderDialog(view.plugin)
+    assert.equal(updateStatusOf(done).props['data-update-status'], 'available', 'the retried answer is adopted')
+  } finally {
+    view.plugin.dispose()
+  }
+})
+
+test('a startup result that lands after hello is read by one delayed providers refresh', async () => {
+  let hostUpdate = null
+  const plugin = loadPlugin((payload) => {
+    if (payload.action === 'hello') return { ok: true, version: '1.3.0', update: hostUpdate }
+    if (payload.action === 'stats') return { ok: true, stats: statsFixture() }
+    if (payload.action === 'providers') {
+      return { ...providersFixture({ settings: persistedSettingsFixture({ updateCheck: true }) }), update: hostUpdate }
+    }
+    return { ok: true, snapshot: snapshotFixture(payload.providerId) }
+  })
+  try {
+    let tree = await settleDialog(plugin, 'opencode-go')
+    assert.equal(updateFooterLineOf(tree), undefined, 'the first bootstrap answered before the result existed')
+
+    // The Host's own startup check finishes after hello + bootstrap.
+    hostUpdate = updateInfoFixture()
+    const refresh = plugin.timeouts.find((timeout) => timeout.ms === 1200)
+    assert.ok(refresh, 'one delayed providers refresh is armed at startup')
+    refresh.fn()
+    await settle()
+    tree = await settleDialog(plugin, 'opencode-go')
+    assert.ok(updateFooterLineOf(tree), 'the delayed refresh surfaces the footer line without the management page')
+  } finally {
+    plugin.dispose()
+  }
+})
+
+test('turning the startup check on surfaces the Host result shortly after, without a registry call', async () => {
+  let hostUpdate = null
+  let hostSetting = false
+  const plugin = loadPlugin((payload) => {
+    if (payload.action === 'hello') return { ok: true, version: '1.3.0', update: hostUpdate }
+    if (payload.action === 'stats') return { ok: true, stats: statsFixture() }
+    if (payload.action === 'providers') {
+      return {
+        ...providersFixture({ settings: persistedSettingsFixture({ updateCheck: hostSetting }) }),
+        update: hostUpdate,
+        updatePackageUrl: undefined,
+      }
+    }
+    if (payload.action === 'settingsUpdate') {
+      hostSetting = payload.settings.updateCheck === true
+      // The Host starts its background check after saving; this answer still
+      // carries no result, exactly like the real single-flight behaviour.
+      return {
+        ...providersFixture({ settings: persistedSettingsFixture({ updateCheck: hostSetting }) }),
+        update: hostUpdate,
+      }
+    }
+    return { ok: true, snapshot: snapshotFixture(payload.providerId) }
+  })
+  try {
+    let tree = await settleSettingsTab(plugin)
+    assert.equal(updateCheckOptionOf(tree, false).props['data-active'], 'true')
+    updateCheckOptionOf(tree, true).props.onClick()
+    await settle()
+    tree = renderDialog(plugin)
+    assert.equal(updateStatusOf(tree).props['data-update-status'], 'never', 'the settings answer has no result yet')
+
+    // The Host check finishes a moment later; the delayed local providers read
+    // picks it up without the client asking the registry itself.
+    hostUpdate = updateInfoFixture()
+    const refresh = plugin.timeouts.filter((timeout) => timeout.ms === 1200)
+    assert.ok(refresh.length >= 1, 'a delayed providers refresh is armed')
+    refresh[refresh.length - 1].fn()
+    await settle()
+    assert.equal(
+      actions(plugin).filter((action) => action === 'updateCheck').length,
+      0,
+      'the client never called the registry action',
+    )
+    tree = renderDialog(plugin)
+    assert.equal(updateStatusOf(tree).props['data-update-status'], 'available', 'the delayed read adopts the result')
+  } finally {
+    plugin.dispose()
+  }
+})
+
+test('the management page runs ONE silent check when the startup setting is on', async () => {
+  const view = loadUpdatePlugin({ settings: { updateCheck: true } })
+  try {
+    let tree = await settleSettingsTab(view.plugin)
+    assert.equal(view.updateCheckCalls.length, 1, 'opening the page checks once')
+    assert.equal(updateStatusOf(tree).props['data-update-status'], 'available', 'the silent result is shown')
+
+    // Reopening the management page / refreshing the list never checks again.
+    backButtonOf(tree).props.onClick()
+    tree = renderDialog(view.plugin)
+    manageButtonOf(tree).props.onClick()
+    await settle()
+    tree = renderDialog(view.plugin)
+    assert.equal(view.updateCheckCalls.length, 1, 'the one-shot guard prevents a second silent check')
+    // 管理 reopens on 供应商配置; switch back to 插件设置 for the status row.
+    tree = switchManageTab(view.plugin, tree, 'settings')
+    assert.equal(updateStatusOf(tree).props['data-update-status'], 'available')
+    assert.equal(view.updateCheckCalls.length, 1, 'switching the tab does not check either')
+  } finally {
+    view.plugin.dispose()
+  }
+
+  // With the setting off the page must stay silent.
+  const off = loadUpdatePlugin({ settings: { updateCheck: false } })
+  try {
+    await settleSettingsTab(off.plugin)
+    assert.equal(off.updateCheckCalls.length, 0, 'an off setting never checks on open')
+  } finally {
+    off.plugin.dispose()
+  }
+})
+
+test('the dialog footer shows 「发现新版本」 only while an update is available', async () => {
+  // A hello envelope with an available update: the footer line + npm link.
+  const available = loadUpdatePlugin({ helloUpdate: updateInfoFixture() })
+  try {
+    const tree = await settleDialog(available.plugin, 'opencode-go')
+    const line = updateFooterLineOf(tree)
+    assert.ok(line, 'the footer update line renders')
+    assert.match(textOf(line), /发现新版本 v1\.4\.0/)
+    assert.match(textOf(line), /打开 npm/)
+    const link = updateNpmLinkOf(line)
+    assert.ok(link, 'the 「打开 npm」 tail is the footer link')
+    assert.match(textOf(link), /^打开 npm/, 'the link text is the localized npm action')
+    assert.equal(link.props.href, NPM_PACKAGE_PAGE)
+    assert.equal(link.props.target, '_blank')
+    assert.match(String(link.props.rel), /noreferrer/)
+
+    // The en copy keeps the same sentence / link split (the link phrase is not
+    // printed twice: once as body text and once as the anchor).
+    const enT = translatorOf(available.plugin.dictionaries['dsh-tokenlens'].en)
+    const enLine = updateFooterLineOf(dialogOf(available.plugin).component({ sessionId: 'session-1', t: enT }))
+    assert.ok(enLine, 'the en footer line renders')
+    assert.match(textOf(enLine), /New version v1\.4\.0/)
+    assert.equal((textOf(enLine).match(/Open on npm/g) ?? []).length, 1, 'the npm action appears once')
+  } finally {
+    available.plugin.dispose()
+  }
+
+  // Up to date: no footer line.
+  const upToDate = loadUpdatePlugin({ helloUpdate: updateInfoFixture({ latest: '1.3.0', available: false }) })
+  try {
+    const tree = await settleDialog(upToDate.plugin, 'opencode-go')
+    assert.equal(updateFooterLineOf(tree), undefined, 'an up-to-date result adds no footer line')
+  } finally {
+    upToDate.plugin.dispose()
+  }
+
+  // No update info at all: no footer line, no crash.
+  const none = loadPlugin()
+  try {
+    const tree = await settleDialog(none, 'opencode-go')
+    assert.equal(updateFooterLineOf(tree), undefined, 'an old Host without update adds no footer line')
+  } finally {
+    none.dispose()
+  }
+
+  // A providers payload carrying the result also feeds the footer (bootstrap).
+  const fromProviders = loadUpdatePlugin({ providersUpdate: updateInfoFixture() })
+  try {
+    const tree = await settleDialog(fromProviders.plugin, 'opencode-go')
+    assert.ok(updateFooterLineOf(tree), 'the providers payload result reaches the footer too')
+  } finally {
+    fromProviders.plugin.dispose()
+  }
+
+  // The Host may advertise the npm page its links should open.
+  const advertised = loadUpdatePlugin({
+    providersUpdate: updateInfoFixture(),
+    updatePackageUrl: 'https://npm.example.test/dsh-tokenlens',
+  })
+  try {
+    const tree = await settleDialog(advertised.plugin, 'opencode-go')
+    const link = updateNpmLinkOf(updateFooterLineOf(tree))
+    assert.equal(link.props.href, 'https://npm.example.test/dsh-tokenlens', 'the advertised npm page wins')
+  } finally {
+    advertised.plugin.dispose()
+  }
+})
+
 

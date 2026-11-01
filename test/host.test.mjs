@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { zstdCompressSync } from 'node:zlib'
-import { apply, BRIDGE, normalize, TOOL_ACTIONS } from '../index.js'
+import { apply, BRIDGE, normalize, PLUGIN_VERSION, TOOL_ACTIONS } from '../index.js'
 import { redactPath } from '../lib/redact.mjs'
 import {
   asCacheHit,
@@ -785,6 +785,7 @@ test('unknown actions are refused with the legal list', async (t) => {
     'settingsUpdate',
     'customProviderSave',
     'customProviderDelete',
+    'updateCheck',
   ])
 })
 
@@ -1301,4 +1302,165 @@ test('the agent tool also exposes providerId and stats', async (t) => {
   const byProvider = await tool.execute({ action: 'snapshot', providerId: 'opencode-go' })
   assert.equal(byProvider.snapshot.provider.id, 'opencode-go')
   assert.deepEqual(byProvider.snapshot.provider, { id: 'opencode-go', label: 'OpenCode', kind: 'windows' })
+})
+
+// ---- optional startup update check (v1.3.0) --------------------------------
+
+test('the optional update check compares the published npm version', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'tokenlens-update-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const { captured } = harness(t, {
+    credentials: okCredentials,
+    config: { minRefreshIntervalMs: 0, pollIntervalMs: 0, providerStoreFile: join(dir, 'providers.json') },
+  })
+  const calls = stubFetch(t, (call, url) =>
+    String(url).includes('registry.npmjs.org')
+      ? jsonResponse({ name: 'dsh-tokenlens', version: '99.1.0' })
+      : jsonResponse(LIVE_PAYLOAD),
+  )
+
+  const result = await bridge(captured, { action: 'updateCheck' })
+  assert.equal(result.body.ok, true)
+  assert.equal(result.body.update.current, PLUGIN_VERSION)
+  assert.equal(result.body.update.latest, '99.1.0')
+  assert.equal(result.body.update.available, true)
+  assert.equal(result.body.update.error, null)
+  assert.match(result.body.update.checkedAt, /^\d{4}-\d{2}-\d{2}T/)
+  assert.equal(
+    calls.some((call) => String(call.url).includes('registry.npmjs.org')),
+    true,
+    'exactly the registry endpoint was asked',
+  )
+
+  const list = await bridge(captured, { action: 'providers' })
+  assert.deepEqual(list.body.update, result.body.update, 'the management payload carries the same result')
+  assert.equal(list.body.settings.updateCheck, false, 'checking does not enable the setting')
+})
+
+test('a failed update check is reported, never thrown', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'tokenlens-update-fail-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const { captured } = harness(t, {
+    credentials: okCredentials,
+    config: { minRefreshIntervalMs: 0, pollIntervalMs: 0, providerStoreFile: join(dir, 'providers.json') },
+  })
+  stubFetch(t, (call, url) =>
+    String(url).includes('registry.npmjs.org') ? jsonResponse({}, 503) : jsonResponse(LIVE_PAYLOAD),
+  )
+  const result = await bridge(captured, { action: 'updateCheck' })
+  assert.equal(result.body.ok, true, 'the bridge still answers ok')
+  assert.equal(result.body.update.available, false)
+  assert.equal(result.body.update.latest, null)
+  assert.equal(result.body.update.error.code, 'http')
+  assert.equal(result.body.update.error.retryable, true)
+})
+
+test('settingsUpdate toggles the optional update check and persists it', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'tokenlens-update-setting-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const storeFile = join(dir, 'providers.json')
+  const { captured } = harness(t, {
+    credentials: okCredentials,
+    config: { minRefreshIntervalMs: 0, pollIntervalMs: 0, providerStoreFile: storeFile },
+  })
+  const stubCalls = stubFetch(t, (call, url) =>
+    String(url).includes('registry.npmjs.org') ? jsonResponse({ version: '99.0.0' }) : jsonResponse(LIVE_PAYLOAD),
+  )
+
+  const rejected = await bridge(captured, { action: 'settingsUpdate', settings: { updateCheck: 'yes' } })
+  assert.equal(rejected.status, 500)
+  assert.equal(rejected.body.error.code, 'unsupported-provider')
+
+  const saved = await bridge(captured, { action: 'settingsUpdate', settings: { updateCheck: true } })
+  assert.equal(saved.body.ok, true)
+  assert.equal(saved.body.settings.updateCheck, true)
+  assert.equal(JSON.parse(await readFile(storeFile, 'utf8')).settings.updateCheck, true)
+
+  // Turning it on runs one check immediately (async); give it a moment.
+  await new Promise((resolve) => setTimeout(resolve, 80))
+  const registryCalls = () => stubCalls.filter((call) => String(call.url).includes('registry.npmjs.org')).length
+  assert.equal(registryCalls(), 1, 'turning the setting on performs one registry request')
+  const list = await bridge(captured, { action: 'providers' })
+  assert.equal(list.body.settings.updateCheck, true)
+  assert.equal(list.body.update.latest, '99.0.0')
+
+  // A later full-settings save (the client always sends every field) must not
+  // re-request npm: only the off→on transition triggers the check.
+  const resaved = await bridge(captured, { action: 'settingsUpdate', settings: { updateCheck: true, defaultView: 'data' } })
+  assert.equal(resaved.body.ok, true)
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  assert.equal(registryCalls(), 1, 'saving other settings while enabled does not re-check')
+})
+
+test('concurrent update checks share one in-flight registry request', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'tokenlens-update-concurrent-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const { captured } = harness(t, {
+    credentials: okCredentials,
+    config: { minRefreshIntervalMs: 0, pollIntervalMs: 0, providerStoreFile: join(dir, 'providers.json') },
+  })
+  const calls = stubFetch(t, (call, url) =>
+    String(url).includes('registry.npmjs.org') ? jsonResponse({ version: '99.2.0' }) : jsonResponse(LIVE_PAYLOAD),
+  )
+  const [first, second] = await Promise.all([
+    bridge(captured, { action: 'updateCheck' }),
+    bridge(captured, { action: 'updateCheck' }),
+  ])
+  assert.equal(first.body.ok, true)
+  assert.equal(second.body.ok, true)
+  assert.equal(first.body.update.latest, '99.2.0')
+  assert.deepEqual(second.body.update, first.body.update, 'both callers see the same UpdateInfo')
+  assert.equal(
+    calls.filter((call) => String(call.url).includes('registry.npmjs.org')).length,
+    1,
+    'a single registry request',
+  )
+})
+
+test('the startup check runs only when the persisted setting enables it', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'tokenlens-update-startup-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const storeFile = join(dir, 'providers.json')
+  await writeFile(
+    storeFile,
+    JSON.stringify({ version: 1, providers: {}, customProviders: {}, settings: { updateCheck: true } }),
+    'utf8',
+  )
+  // The startup check fires during activation, so the fetch stub must be ready
+  // before the harness mounts the plugin.
+  const calls = stubFetch(t, (call, url) =>
+    String(url).includes('registry.npmjs.org') ? jsonResponse({ version: '99.5.0' }) : jsonResponse(LIVE_PAYLOAD),
+  )
+  const { captured } = harness(t, {
+    credentials: okCredentials,
+    config: { minRefreshIntervalMs: 0, pollIntervalMs: 0, providerStoreFile: storeFile },
+  })
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  assert.equal(
+    calls.some((call) => String(call.url).includes('registry.npmjs.org')),
+    true,
+    'one startup registry request',
+  )
+  const list = await bridge(captured, { action: 'providers' })
+  assert.equal(list.body.update.available, true)
+  assert.equal(list.body.update.latest, '99.5.0')
+})
+
+test('the update check stays off by default (no registry request)', async (t) => {
+  const calls = stubFetch(t, () => jsonResponse(LIVE_PAYLOAD))
+  const { captured } = harness(t, {
+    credentials: okCredentials,
+    config: { minRefreshIntervalMs: 0, pollIntervalMs: 0 },
+  })
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  assert.equal(
+    calls.some((call) => String(call.url).includes('registry.npmjs.org')),
+    false,
+    'local-only unless enabled',
+  )
+  const list = await bridge(captured, { action: 'providers' })
+  assert.equal(list.body.update, null)
+  assert.equal(list.body.settings.updateCheck, false)
+  const hello = await bridge(captured, { action: 'hello', origin: 'dsh-app://app' })
+  assert.equal(hello.body.update, null)
 })

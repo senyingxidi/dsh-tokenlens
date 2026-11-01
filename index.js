@@ -37,6 +37,7 @@ import {
 } from './lib/provider-store.mjs'
 import { makeCustomAdapter, sanitizeUsageBaseURL, validateCustomProvider } from './lib/custom-provider.mjs'
 import { redactEndpoint, redactPaths, redactTextPaths } from './lib/redact.mjs'
+import { UPDATE_CHECK_URL, UPDATE_PACKAGE_URL, buildUpdateInfo, parseLatestVersion } from './lib/update-check.mjs'
 
 /**
  * The one browser-facing route this plugin owns.
@@ -60,10 +61,11 @@ export const ACTIONS = [
   'settingsUpdate',
   'customProviderSave',
   'customProviderDelete',
+  'updateCheck',
 ]
 
 /** The tool-facing subset (a model has no reason to announce a browser). */
-export const TOOL_ACTIONS = ['snapshot', 'refresh', 'stats', 'diagnostics', 'status']
+export const TOOL_ACTIONS = ['snapshot', 'refresh', 'stats', 'diagnostics', 'status', 'updateCheck']
 
 /** Optional services; every one is probed with `ctx.get` at use time. */
 export const inject = []
@@ -72,7 +74,7 @@ export const inject = []
 export const PLUGIN_NAME = 'dsh-tokenlens'
 
 /** Plugin version; mirrors package.json (kept here so diagnostics need no fs read). */
-export const PLUGIN_VERSION = '1.2.2'
+export const PLUGIN_VERSION = '1.3.0'
 
 /** Documented defaults; every field of the raw row config is optional. */
 const DEFAULTS = {
@@ -282,6 +284,11 @@ export function apply(ctx, rawConfig) {
     requestCounts: new Map(), // providerId 鈫?successful reads
     subscribers: new Set(),
     client: null, // last browser `hello`
+    // Optional startup update check (settings.updateCheck): the last result
+    // `{current, latest, available, checkedAt, error}` or null before the first
+    // check. Never fetched unless the user enables the setting.
+    update: null,
+    updateChecking: false,
     bridge: { found: false, registered: false, path: BRIDGE, error: null },
     poll: { timer: null },
     status: { timer: null },
@@ -729,6 +736,11 @@ export function apply(ctx, rawConfig) {
       providers,
       dshProviders,
       settings: sanitizeSettings(providerStore.settings),
+      // Optional startup update check (settings.updateCheck): null until the
+      // first check; never fetched unless the setting is enabled or the user
+      // presses "check now".
+      update: state.update,
+      updatePackageUrl: UPDATE_PACKAGE_URL,
       storeFile: redactPaths(providerStoreFile),
       storeFileDisplay: redactPaths(providerStoreFile),
     }
@@ -874,6 +886,53 @@ export function apply(ctx, rawConfig) {
   /** The built-in adapters' convenience wrapper: GET with a Bearer token. */
   async function fetchJson(url, keyValue) {
     return requestJson(url, { bearer: keyValue })
+  }
+
+  // Single-flight guard for the optional update check (see runUpdateCheck).
+  let updateFlight = null
+
+  /**
+   * Ask the npm registry for the published `latest` version and remember the
+   * comparison result. This is the plugin's only non-provider outbound request
+   * and it only ever happens when the user enabled `settings.updateCheck`
+   * (startup / toggling it on) or presses "check now" on the management page.
+   *
+   * Single-flight: a concurrent call awaits the same in-flight check instead of
+   * answering `null`, and the function never throws — an offline machine or an
+   * upstream failure is stored as an error state so the UI can explain it.
+   */
+  async function runUpdateCheck() {
+    if (updateFlight !== null) return updateFlight
+    updateFlight = (async () => {
+      state.updateChecking = true
+      let latest = null
+      let failure = null
+      try {
+        const payload = await requestJson(UPDATE_CHECK_URL)
+        latest = parseLatestVersion(payload)
+        if (latest === null) {
+          throw new UsageError('parse', 'the npm registry response has no usable version', { retryable: false })
+        }
+      } catch (error) {
+        failure = errorToWire(error)
+      } finally {
+        state.updateChecking = false
+      }
+      state.update = buildUpdateInfo(PLUGIN_VERSION, latest, new Date().toISOString(), failure)
+      noteStatus('update-check')
+      announce()
+      if (failure !== null) {
+        warn(`update check failed: ${failure.code}: ${failure.message}`)
+      } else if (state.update.available === true) {
+        log('info', `update available: ${state.update.latest} (running ${PLUGIN_VERSION})`)
+      }
+      return state.update
+    })()
+    try {
+      return await updateFlight
+    } finally {
+      updateFlight = null
+    }
   }
 
   /** Read one provider's usage: resolve its key (when it has one), call its adapter. */
@@ -1391,6 +1450,7 @@ export function apply(ctx, rawConfig) {
       activeProvider: activeProviderId(),
       client: state.client,
       bridge: { ...state.bridge },
+      update: state.update,
       providers,
       stats: statsService?.diagnostics?.() ?? null,
       subscribers: state.subscribers.size,
@@ -1586,7 +1646,15 @@ export function apply(ctx, rawConfig) {
         log('info', `browser half connected from ${String(state.client.origin ?? 'unknown origin')} (${providerId ?? 'default provider'})`)
         // Answer with a snapshot too, so the first paint needs one round trip.
         const first = await get(requestProvider(body))
-        return json({ ok: true, plugin: PLUGIN_NAME, version: PLUGIN_VERSION, bridge: BRIDGE, pid: process.pid, ...first })
+        return json({
+          ok: true,
+          plugin: PLUGIN_NAME,
+          version: PLUGIN_VERSION,
+          bridge: BRIDGE,
+          pid: process.pid,
+          update: state.update,
+          ...first,
+        })
       }
       if (action === 'snapshot' || action === 'status') {
         rememberRequestedProvider(body)
@@ -1598,6 +1666,7 @@ export function apply(ctx, rawConfig) {
       }
       if (action === 'stats') return json(await getStats({ fresh: body?.fresh === true }))
       if (action === 'providers') return json(await providersPayload())
+      if (action === 'updateCheck') return json({ ok: true, update: await runUpdateCheck() })
       if (action === 'customProviderSave') {
         const def = validateCustomProvider(body?.provider ?? body)
         if (PROVIDER_DEFAULTS[def.providerId] !== undefined || ADAPTERS[def.providerId] !== undefined) {
@@ -1668,11 +1737,23 @@ export function apply(ctx, rawConfig) {
           }
           next.detailsWindow = incoming.detailsWindow
         }
+        if (Object.prototype.hasOwnProperty.call(incoming, 'updateCheck')) {
+          if (typeof incoming.updateCheck !== 'boolean') {
+            throw new UsageError('unsupported-provider', 'settings.updateCheck must be a boolean', {
+              retryable: false,
+            })
+          }
+          next.updateCheck = incoming.updateCheck
+        }
         providerStore = saveProviderStore(providerStoreFile, {
           ...providerStore,
           settings: next,
         })
         noteStatus('settings-update', { providerStoreFile })
+        // Turning the optional update check ON runs one check right away, so the
+        // management page can show a result instead of waiting for a restart. A
+        // full-settings save while it is already on must not re-request npm.
+        if (incoming.updateCheck === true && current.updateCheck !== true) void runUpdateCheck()
         return json(await providersPayload())
       }
       if (action === 'providerUpdate') {
@@ -1765,6 +1846,12 @@ export function apply(ctx, rawConfig) {
   }
 
   noteStatus('activate', { pollIntervalMs: config.pollIntervalMs })
+  // Optional startup update check: one plain npm-registry request, only when the
+  // user enabled `settings.updateCheck`. Off by default to keep the plugin
+  // local-only; failures are recorded and never break activation.
+  if (sanitizeSettings(providerStore.settings).updateCheck === true) {
+    void runUpdateCheck()
+  }
   log(
     'info',
     `ready (providers ${Object.keys(config.providers).filter((id) => config.providers[id].enabled).join(', ') || 'none'}, cache ${config.minRefreshIntervalMs} ms, poll ${config.pollIntervalMs} ms)`,

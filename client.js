@@ -68,6 +68,14 @@ window.__ModuleLoader__.load({
     const MANAGEMENT_SYNC_MS = 15000
     /** Retry delay of a 明细-window save blocked by an in-flight settings request (v1.2.1). */
     const DETAILS_WINDOW_SAVE_RETRY_MS = 200
+    /**
+     * Delays of the network-free providers re-reads while 「启动时检查更新」 is on
+     * and no result exists yet: the Host's own startup / toggle check runs in
+     * the background, so hello or a settings answer can win the race. Two
+     * attempts cover a normal registry round-trip without ever asking the
+     * registry twice; the management page's silent check covers the rest.
+     */
+    const UPDATE_RESULT_REFRESH_MS = [1200, 4000]
     /** How many per-provider / per-model stats rows the dialog lists. */
     const MAX_PROVIDER_ROWS = 5
     const MAX_MODEL_ROWS = 3
@@ -137,7 +145,12 @@ window.__ModuleLoader__.load({
       defaultScope: 'provider',
       detailsExpanded: 'auto',
       detailsWindow: 'total',
+      // 「启动时检查更新」 is persisted too; off by default so an old Host and a
+      // fresh install never contact the npm registry (privacy first).
+      updateCheck: false,
     }
+    /** The npm package page the 「打开 npm」 update links point at. */
+    const NPM_PACKAGE_URL = 'https://www.npmjs.com/package/dsh-tokenlens'
 
     const zh = {
       title: '词元透镜（dsh-TokenLens）',
@@ -340,6 +353,18 @@ window.__ModuleLoader__.load({
       settingsDetailsCollapsed: '收起',
       settingsResetDefaults: '恢复默认设置',
       settingsResetDefaultsHint: '恢复为插件默认的显示设置',
+      updateCheckLabel: '启动时检查更新',
+      updateCheckHint: '仅当开启时才访问 npm registry 检查新版本；默认关闭',
+      updateCheckOff: '关闭',
+      updateCheckOn: '开启',
+      updateChecking: '正在检查…',
+      updateLatest: '已是最新版本 v{version}',
+      updateAvailable: '发现新版本 v{latest}（当前 v{current}）',
+      updateCheckFailed: '检查失败',
+      updateCheckNow: '立即检查',
+      updateCheckNever: '尚未检查',
+      updateOpenNpm: '打开 npm',
+      updateDialogLine: '发现新版本 v{latest} · 打开 npm',
       providerBothLabels: '短标签：{short} · 全名：{full}',
       providerShortLabel: '短标签',
       providerShortLabelHint: '1–12 字符',
@@ -568,6 +593,18 @@ window.__ModuleLoader__.load({
       settingsDetailsCollapsed: 'Collapsed',
       settingsResetDefaults: 'Restore defaults',
       settingsResetDefaultsHint: 'Restore the plugin default display settings',
+      updateCheckLabel: 'Check for updates at startup',
+      updateCheckHint: 'Contacts the npm registry for a new version only when enabled; off by default',
+      updateCheckOff: 'Off',
+      updateCheckOn: 'On',
+      updateChecking: 'Checking…',
+      updateLatest: 'Up to date: v{version}',
+      updateAvailable: 'New version v{latest} available (current v{current})',
+      updateCheckFailed: 'Update check failed',
+      updateCheckNow: 'Check now',
+      updateCheckNever: 'Not checked yet',
+      updateOpenNpm: 'Open on npm',
+      updateDialogLine: 'New version v{latest} · Open on npm',
       providerBothLabels: 'Short label: {short} · Full name: {full}',
       providerShortLabel: 'Short label',
       providerShortLabelHint: '1–12 characters',
@@ -1111,9 +1148,9 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * The five display settings of the `providers` payload (v0.29.0; the 明细
-     * donut window joined them in v1.2.1), every field normalized to a usable
-     * value so old Hosts keep the previous defaults.
+     * The five display settings plus 「启动时检查更新」 of the `providers`
+     * payload, every field normalized to a usable value so old Hosts keep the
+     * previous defaults.
      */
     function normalizePluginSettings(raw) {
       const source = raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
@@ -1123,7 +1160,48 @@ window.__ModuleLoader__.load({
         defaultScope: normalizeDisplayScope(source.defaultScope),
         detailsExpanded: normalizeDetailsExpanded(source.detailsExpanded),
         detailsWindow: normalizeDetailsWindow(source.detailsWindow),
+        // The startup update check is opt-in: a value other than `true` (an old
+        // Host omits the field entirely) means off.
+        updateCheck: source.updateCheck === true,
       }
+    }
+
+    /**
+     * The optional `update` object of the hello / providers envelope: the last
+     * known update check result, or null when the Host never checked.
+     *
+     * Defensive by design — the update UI must never throw on hostile wire
+     * data. String fields collapse to `''`/null, `available` is only claimed
+     * when it is literally `true` *and* names a version, and a wire error keeps
+     * the shared normalized error shape.
+     */
+    function normalizeUpdate(raw) {
+      if (raw === null || raw === undefined || typeof raw !== 'object' || Array.isArray(raw)) return null
+      const current = stringOrEmpty(raw.current).trim()
+      const latestText = stringOrEmpty(raw.latest).trim()
+      const latest = latestText === '' ? null : latestText
+      return {
+        current,
+        latest,
+        available: raw.available === true && latest !== null,
+        checkedAt: stringOrEmpty(raw.checkedAt).trim(),
+        error: raw.error === null || raw.error === undefined ? null : normalizeError(raw.error),
+      }
+    }
+
+    /** Whether two normalized update infos are render-identical (avoids store churn). */
+    function sameUpdate(a, b) {
+      if (a === b) return true
+      if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false
+      if (a.current !== b.current || a.latest !== b.latest || a.available !== b.available || a.checkedAt !== b.checkedAt) {
+        return false
+      }
+      if (a.error === null || b.error === null) return a.error === b.error
+      return (
+        a.error.code === b.error.code &&
+        a.error.message === b.error.message &&
+        a.error.retryable === b.error.retryable
+      )
     }
 
     /**
@@ -1184,6 +1262,10 @@ window.__ModuleLoader__.load({
         ? raw.dshProviders.map((entry) => normalizeDshProviderEntry(entry)).filter((entry) => entry !== null)
         : []
       const settings = raw.settings !== null && typeof raw.settings === 'object' ? raw.settings : {}
+      // The update check result travels with every providers payload; `hasUpdate`
+      // distinguishes "the Host said null" from "an old Host omitted the field",
+      // so a hello-provided result is never wiped by a payload without it.
+      const hasUpdate = Object.prototype.hasOwnProperty.call(raw, 'update')
       return {
         // v0.17.0 identity: dedupe by providerId, last-wins, so the filter tabs
         // never list the same provider twice even if the Host sends a duplicate.
@@ -1196,6 +1278,10 @@ window.__ModuleLoader__.load({
         storeFile: stringOrEmpty(raw.storeFile).trim(),
         storeFileDisplay: stringOrEmpty(raw.storeFileDisplay).trim(),
         settings: normalizePluginSettings(settings),
+        update: hasUpdate ? normalizeUpdate(raw.update) : null,
+        hasUpdate,
+        // Optional: the Host may advertise the npm page its links should open.
+        updatePackageUrl: stringOrEmpty(raw.updatePackageUrl).trim(),
         labelCatalog,
       }
     }
@@ -1773,6 +1859,16 @@ window.__ModuleLoader__.load({
         labelCatalog: {},
         // Plugin version from the hello envelope (dialog footnote).
         pluginVersion: '',
+        // 「启动时检查更新」 (persisted setting) and the last check result the
+        // hello / providers envelope reported, plus the in-flight flag of an
+        // explicit 「立即检查」. The flag is deliberately independent from
+        // `management.settingsBusy`: a check never blocks a settings save.
+        updateCheck: DEFAULT_PLUGIN_SETTINGS.updateCheck,
+        update: null,
+        updateChecking: false,
+        // The canonical npm page the update links open; the Host may advertise
+        // its own (newer bundles may move the package), this is the fallback.
+        updatePackageUrl: NPM_PACKAGE_URL,
         // Extra DSH-only detail blocks (provider split / top models). Collapsed by
         // default on short screens so the dialog fits without a scrollbar.
         showDetails:
@@ -1808,8 +1904,8 @@ window.__ModuleLoader__.load({
     let usageEpoch = 0
 
     /**
-     * The five display settings currently in effect (v0.29.0; the 明细 donut
-     * window joined them in v1.2.1).
+     * The display settings currently in effect: the five v0.29.0 defaults (the
+     * v1.2.1 明细 donut window included) plus 「启动时检查更新」.
      */
     function currentPluginSettings() {
       const state = store.get()
@@ -1819,6 +1915,7 @@ window.__ModuleLoader__.load({
         defaultScope: normalizeDisplayScope(state.defaultScope),
         detailsExpanded: normalizeDetailsExpanded(state.detailsExpanded),
         detailsWindow: normalizeDetailsWindow(state.detailsWindow),
+        updateCheck: state.updateCheck === true,
       }
     }
 
@@ -2065,6 +2162,18 @@ window.__ModuleLoader__.load({
       if (options.adoptDetailsWindow === true && current.detailsWindow !== settings.detailsWindow) {
         patch.detailsWindow = settings.detailsWindow
       }
+      // 「启动时检查更新」 is adopted on every answer (it is the persisted value
+      // echoing back); the answered checkbox state must win after a toggle.
+      if (current.updateCheck !== settings.updateCheck) patch.updateCheck = settings.updateCheck
+      // A payload that carries `update` (even as null) is authoritative for the
+      // last check result; one that omits it (old Host) keeps what hello said.
+      if (parsed.hasUpdate === true && !sameUpdate(current.update, parsed.update)) {
+        patch.update = parsed.update
+      }
+      // The Host-advertised npm page travels with the same payload.
+      if (parsed.updatePackageUrl !== '' && current.updatePackageUrl !== parsed.updatePackageUrl) {
+        patch.updatePackageUrl = parsed.updatePackageUrl
+      }
       if (parsed.labelCatalog !== null && typeof parsed.labelCatalog === 'object') {
         const catalog = { ...current.labelCatalog, ...parsed.labelCatalog }
         if (Object.keys(catalog).length > 0) patch.labelCatalog = catalog
@@ -2123,6 +2232,9 @@ window.__ModuleLoader__.load({
             storeFileDisplay: parsed !== null ? parsed.storeFileDisplay : '',
             loadedAt: Date.now(),
           })
+          // 「启动时检查更新」: the first management-page load runs one silent
+          // check when the setting is on and no result is known yet.
+          maybeAutoUpdateCheck()
           return { kind: 'ok' }
         }
         patchManagement({ inFlight: false, phase: 'error', error: normalizeError(data.error) })
@@ -2273,6 +2385,10 @@ window.__ModuleLoader__.load({
                 }
               : {}),
           })
+          // Turning 「启动时检查更新」 on makes the Host run one check right away;
+          // its answer may still be in flight, so read the local result shortly
+          // after (no extra registry request).
+          if (store.get().updateCheck === true && store.get().update === null) scheduleUpdateResultRefresh()
           return { kind: 'ok' }
         }
         patchManagement({ settingsBusy: false, settingsError: normalizeError(data.error) })
@@ -2329,6 +2445,128 @@ window.__ModuleLoader__.load({
       // settingsUpdate answer intentionally does not adopt that field.
       store.set({ detailsWindow: DEFAULT_PLUGIN_SETTINGS.detailsWindow })
       void requestSettingsUpdate({ ...DEFAULT_PLUGIN_SETTINGS })
+    }
+
+    /** Guards the one silent check the management page may start after opening. */
+    let autoUpdateCheckStarted = false
+    /** Whether the settings error banner currently shows an update-check failure. */
+    let updateCheckErrorShown = false
+    /** One delayed retry when the Host says "a check is already running". */
+    const UPDATE_CHECK_RETRY_MS = 1200
+    let updateCheckRetryTimer = null
+
+    /**
+     * Run one update check (「立即检查」, and the management page's one silent
+     * startup check when 「启动时检查更新」 is on).
+     *
+     * `updateChecking` is an independent flag, never `settingsBusy`: a check may
+     * not block a settings save (and vice versa). A Host-level failure travels
+     * inside `update.error` (the status row renders 检查失败); a transport or
+     * envelope failure uses the management page's existing error banner. Never
+     * throws.
+     */
+    async function requestUpdateCheck(options = {}) {
+      const retried = options.retried === true
+      if (store.get().updateChecking === true) return { kind: 'busy' }
+      store.set({ updateChecking: true })
+      let data
+      try {
+        data = await call({ action: 'updateCheck' })
+      } catch (error) {
+        store.set({ updateChecking: false })
+        updateCheckErrorShown = true
+        patchManagement({ settingsError: managementErrorOf(error) })
+        return { kind: 'transport' }
+      }
+      if (data !== null && typeof data === 'object' && typeof data.ok === 'boolean') {
+        if (data.ok === true) {
+          const update = normalizeUpdate(data.update)
+          if (update !== null) {
+            store.set({ updateChecking: false, update })
+            // A successful retry retires the banner of the failed one instead of
+            // leaving a stale check failure above a fresh result.
+            if (updateCheckErrorShown === true) {
+              updateCheckErrorShown = false
+              patchManagement({ settingsError: null })
+            }
+            return { kind: 'ok' }
+          }
+          // A first-ever check that is already in flight comes back as
+          // `{ok:true, update:null}` (the Host's single-flight returns the last
+          // result). Retry once after a short delay instead of reporting a bad
+          // response; a result that arrived meanwhile (management sync) retires
+          // the retry.
+          if (!retried) {
+            if (updateCheckRetryTimer !== null) window.clearTimeout(updateCheckRetryTimer)
+            updateCheckRetryTimer = window.setTimeout(() => {
+              updateCheckRetryTimer = null
+              store.set({ updateChecking: false })
+              if (store.get().update !== null) return
+              void requestUpdateCheck({ retried: true })
+            }, UPDATE_CHECK_RETRY_MS)
+            return { kind: 'pending' }
+          }
+          store.set({ updateChecking: false })
+          return { kind: 'pending' }
+        }
+        store.set({ updateChecking: false })
+        updateCheckErrorShown = true
+        patchManagement({ settingsError: normalizeError(data.error) })
+        return { kind: 'envelope' }
+      }
+      store.set({ updateChecking: false })
+      updateCheckErrorShown = true
+      patchManagement({
+        settingsError: { code: 'internal', message: 'unexpected updateCheck response', retryable: true },
+      })
+      return { kind: 'transport' }
+    }
+
+    /**
+     * The management page's ONE silent check: only while the setting is on and
+     * no result is known yet. The module-level flag makes a re-open, a tab
+     * switch or a provider-list refresh impossible to turn into a second check.
+     */
+    function maybeAutoUpdateCheck() {
+      if (autoUpdateCheckStarted === true) return
+      const state = store.get()
+      if (state.updateCheck !== true || state.update !== null) return
+      autoUpdateCheckStarted = true
+      void requestUpdateCheck()
+    }
+
+    /** The pending network-free providers re-read (see UPDATE_RESULT_REFRESH_MS). */
+    let updateResultRefreshTimer = null
+    let updateResultRefreshAttempt = 0
+
+    /**
+     * Read the local providers payload once more after the Host's background
+     * update check had time to finish (`updateCheck` on, no result known yet).
+     *
+     * This never asks the npm registry itself — it only re-reads the Host state
+     * that the Host's own startup / toggle check fills in. No-op once a result
+     * exists or the setting is off, so it can be armed from several places.
+     */
+    function scheduleUpdateResultRefresh() {
+      if (updateResultRefreshTimer !== null) return
+      const delay = UPDATE_RESULT_REFRESH_MS[updateResultRefreshAttempt]
+      if (delay === undefined) return
+      updateResultRefreshAttempt += 1
+      updateResultRefreshTimer = window.setTimeout(() => {
+        updateResultRefreshTimer = null
+        const state = store.get()
+        if (state.updateCheck !== true || state.update !== null) {
+          updateResultRefreshAttempt = 0
+          return
+        }
+        void bootstrapProviders().then(() => {
+          if (store.get().update !== null) {
+            updateResultRefreshAttempt = 0
+            return
+          }
+          scheduleUpdateResultRefresh()
+        })
+      }, delay)
     }
 
     /** Force one upstream read for a provider and keep the row outcome. Never throws. */
@@ -2519,6 +2757,9 @@ window.__ModuleLoader__.load({
       const current = store.get().management
       const stale = current.loadedAt === 0 || Date.now() - current.loadedAt >= PROVIDERS_TTL_MS
       if (current.inFlight !== true && stale) void requestProviders()
+      // A fresh check when the setting is already known and no result exists
+      // (the requestProviders answer triggers the same one-shot path otherwise).
+      maybeAutoUpdateCheck()
     }
 
     /** Switch back to the usage page (the modal chrome stays). */
@@ -2633,12 +2874,20 @@ window.__ModuleLoader__.load({
       void requestProviderUpdate(provider.providerId, { shortLabel: '', label: '' })
     }
 
-    /** Store the plugin version reported by the hello envelope (dialog footnote). */
+    /** Store the plugin version and the last update check result of the hello envelope. */
     function applyHelloInfo(data) {
       if (data === null || typeof data !== 'object') return
+      const patch = {}
       if (typeof data.version === 'string' && data.version !== '') {
-        if (store.get().pluginVersion !== data.version) store.set({ pluginVersion: data.version })
+        if (store.get().pluginVersion !== data.version) patch.pluginVersion = data.version
       }
+      // `update` is optional on the wire: only an explicit field (null included)
+      // replaces what the store already knows.
+      if (Object.prototype.hasOwnProperty.call(data, 'update')) {
+        const update = normalizeUpdate(data.update)
+        if (!sameUpdate(store.get().update, update)) patch.update = update
+      }
+      if (Object.keys(patch).length > 0) store.set(patch)
     }
 
     /** Announce this browser half to the Host (also records the current provider). */
@@ -2772,6 +3021,11 @@ window.__ModuleLoader__.load({
       // v0.10.0: learn the persisted chip label style + wire labels once, without
       // touching the management page state (silent when an old Host answers nothing).
       void bootstrapProviders()
+      // The Host runs its optional startup update check in the background; the
+      // hello / bootstrap answers above can win the race and carry no result yet.
+      // Re-read the (local, no-network) providers payload shortly after so the
+      // dialog footer can show the result without opening the management page.
+      scheduleUpdateResultRefresh()
       pollTimer = window.setInterval(() => {
         void poll()
       }, POLL_INTERVAL_MS)
@@ -2783,6 +3037,16 @@ window.__ModuleLoader__.load({
         disposed = true
         if (pollTimer !== null) window.clearInterval(pollTimer)
         if (retryTimer !== null) window.clearTimeout(retryTimer)
+        // Pending update-check timers must not fire into a disposed controller.
+        updateResultRefreshAttempt = 0
+        if (updateResultRefreshTimer !== null) {
+          window.clearTimeout(updateResultRefreshTimer)
+          updateResultRefreshTimer = null
+        }
+        if (updateCheckRetryTimer !== null) {
+          window.clearTimeout(updateCheckRetryTimer)
+          updateCheckRetryTimer = null
+        }
         if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
           document.removeEventListener('visibilitychange', onVisibilityChange)
         }
@@ -3118,6 +3382,20 @@ window.__ModuleLoader__.load({
 .dsh-tokenlens-settings-options .dsh-tokenlens-settings-option{display:inline-flex;align-items:center;gap:4px}
 .dsh-tokenlens-settings-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px;min-width:0}
 @media (max-width:560px){.dsh-tokenlens-settings-row{grid-template-columns:minmax(0,1fr)}}
+/* Update check block (update UI): toggle row, privacy hint, status line + 立即检查. */
+.dsh-tokenlens-update-section{display:flex;flex-direction:column;gap:6px;min-width:0;margin-top:2px;padding-top:8px;border-top:1px solid var(--dsw-alias-border-subtle,rgba(127,127,127,.18))}
+.dsh-tokenlens-update-hint{opacity:.8;font-size:11px}
+.dsh-tokenlens-update-status{align-items:center;flex-wrap:wrap;display:flex;gap:5px;min-width:0;color:var(--dsw-alias-label-secondary);font-size:var(--dsw-alias-font-size-sm,12px);line-height:1.4;overflow-wrap:anywhere}
+.dsh-tokenlens-update-status[data-kind=error]{color:var(--dsw-alias-label-error,#d9534f)}
+.dsh-tokenlens-update-status[data-kind=available]{color:var(--dsw-alias-label-primary)}
+.dsh-tokenlens-update-error-detail{opacity:.85;min-width:0;overflow-wrap:anywhere}
+.dsh-tokenlens-update-retry{font:inherit;font-size:11px;line-height:inherit;padding:0;border:0;background:0 0;color:inherit;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.dsh-tokenlens-update-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;min-width:0}
+.dsh-tokenlens-update-link{display:inline-flex;align-items:center;gap:4px;color:var(--dsw-alias-label-secondary);font-size:inherit;text-decoration:underline;text-underline-offset:2px;min-width:0}
+.dsh-tokenlens-update-link:hover,.dsh-tokenlens-update-retry:hover{color:var(--dsw-alias-label-primary)}
+.dsh-tokenlens-update-link:focus-visible,.dsh-tokenlens-update-retry:focus-visible{outline:none;box-shadow:0 0 0 2px var(--dsw-alias-border-strong,rgba(127,127,127,.5));border-radius:2px}
+.dsh-tokenlens-update-line{display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px 6px;min-width:0;margin-right:auto;color:var(--dsw-alias-label-tertiary);font-size:var(--dsw-alias-font-size-sm,12px);line-height:1.4}
+.dsh-tokenlens-update-line .dsh-tokenlens-update-link{color:inherit}
 .dsh-tokenlens-provider-labels{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:1.4;overflow-wrap:anywhere;display:flex;flex-wrap:wrap;align-items:flex-start;gap:4px}
 .dsh-tokenlens-provider-labels .dsh-tokenlens-icon{margin-top:1px}
 /* Inline icons: currentColor stroke, never a text node (keeps textOf stable). */
@@ -5891,11 +6169,13 @@ window.__ModuleLoader__.load({
             h(
               'button',
               {
-                key: option.value,
+                key: String(option.value),
                 type: 'button',
                 className: `dsh-tokenlens-scope-option dsh-tokenlens-settings-option${field === 'labelStyle' ? ' dsh-tokenlens-label-style-option' : ''}`,
                 'data-setting': field,
-                'data-value': option.value,
+                // A boolean row (updateCheck) is stringified so `data-*` matches
+                // the real DOM; the string rows keep their wire value verbatim.
+                'data-value': typeof option.value === 'string' ? option.value : String(option.value),
                 'data-label-style': field === 'labelStyle' ? option.value : undefined,
                 'data-active': active === option.value ? 'true' : 'false',
                 'aria-pressed': active === option.value ? 'true' : 'false',
@@ -5908,6 +6188,127 @@ window.__ModuleLoader__.load({
               Icon(option.icon, 12),
               option.label,
             ),
+          ),
+        ),
+      )
+    }
+
+    /** The npm page the update links open (the Host-advertised one when present). */
+    function updatePackageUrlOf(state) {
+      return typeof state?.updatePackageUrl === 'string' && state.updatePackageUrl !== ''
+        ? state.updatePackageUrl
+        : NPM_PACKAGE_URL
+    }
+
+    /**
+     * The 「更新检查」 status line: checking → failed → update available → up to
+     * date → never checked. `data-update-status` names the branch for tests and
+     * styling; the error branch keeps a 重试 action only when retryable.
+     */
+    function buildUpdateStatusLine(state, t) {
+      const update = state.update
+      const packageUrl = updatePackageUrlOf(state)
+      const line = (kind, children) =>
+        h(
+          'div',
+          {
+            key: 'update-status',
+            className: 'dsh-tokenlens-update-status',
+            'data-update-status': kind,
+            'data-kind': kind,
+            role: 'status',
+          },
+          Icon(kind === 'error' ? 'alert' : kind === 'available' ? 'bolt' : kind === 'latest' ? 'check' : 'info', 12),
+          children,
+        )
+      if (state.updateChecking === true) {
+        return line('checking', h('span', { key: 'text' }, t('updateChecking')))
+      }
+      if (update !== null && update.error !== null) {
+        return line('error', [
+          h('span', { key: 'text' }, t('updateCheckFailed')),
+          h('span', { key: 'detail', className: 'dsh-tokenlens-update-error-detail', title: update.error.message }, managementErrorText(update.error, t)),
+          update.error.retryable === true
+            ? h(
+                'button',
+                {
+                  key: 'retry',
+                  type: 'button',
+                  className: 'dsh-tokenlens-update-retry',
+                  'data-update-retry': 'true',
+                  onClick: () => {
+                    void requestUpdateCheck()
+                  },
+                },
+                t('retry'),
+              )
+            : null,
+        ])
+      }
+      if (update !== null && update.available === true) {
+        return line('available', [
+          h('span', { key: 'text' }, t('updateAvailable', { latest: update.latest, current: update.current })),
+          h(
+            'a',
+            {
+              key: 'link',
+              className: 'dsh-tokenlens-update-link',
+              'data-update-link': 'true',
+              href: packageUrl,
+              target: '_blank',
+              rel: 'noreferrer noopener',
+              title: packageUrl,
+              onClick: (event) => openConsole(packageUrl, event),
+            },
+            Icon('external', 12),
+            t('updateOpenNpm'),
+          ),
+        ])
+      }
+      if (update !== null && update.latest !== null && update.available === false) {
+        return line('latest', h('span', { key: 'text' }, t('updateLatest', { version: update.latest })))
+      }
+      return line('never', h('span', { key: 'text' }, t('updateCheckNever')))
+    }
+
+    /**
+     * The 「更新检查」 block of 插件设置: the startup toggle (the shared settings
+     * row), the registry-privacy hint, the last check result and 「立即检查」.
+     * The check button works whether the startup toggle is on or off, and its
+     * `updateChecking` flag is independent from `settingsBusy`.
+     */
+    function buildUpdateSection(state, t) {
+      const checking = state.updateChecking === true
+      return h(
+        'div',
+        { key: 'update-section', className: 'dsh-tokenlens-update-section', 'data-update-section': 'true' },
+        buildSettingsRow(state, t, 'updateCheck', t('updateCheckLabel'), [
+          { value: false, label: t('updateCheckOff'), icon: 'ban' },
+          { value: true, label: t('updateCheckOn'), icon: 'check' },
+        ]),
+        h(
+          'div',
+          { key: 'hint', className: 'dsh-tokenlens-subtitle dsh-tokenlens-update-hint', 'data-update-hint': 'true' },
+          t('updateCheckHint'),
+        ),
+        buildUpdateStatusLine(state, t),
+        h(
+          'div',
+          { key: 'actions', className: 'dsh-tokenlens-update-actions' },
+          h(
+            Button,
+            {
+              variant: 'outline',
+              className: 'dsh-tokenlens-update-check',
+              'data-update-check-now': 'true',
+              title: t('updateCheckNow'),
+              disabled: checking,
+              onClick: () => {
+                void requestUpdateCheck()
+              },
+            },
+            Icon('spinner', 12),
+            checking ? t('updateChecking') : t('updateCheckNow'),
           ),
         ),
       )
@@ -5937,6 +6338,9 @@ window.__ModuleLoader__.load({
           { value: 'collapsed', label: t('settingsDetailsCollapsed'), icon: 'list' },
         ]),
       ]
+      // 「更新检查」 is its own block (own status + own in-flight flag), kept
+      // apart from the display-defaults rows and their reset button.
+      children.push(buildUpdateSection(state, t))
       const actions = h(
         'div',
         { key: 'actions', className: 'dsh-tokenlens-settings-actions' },
@@ -6381,6 +6785,46 @@ window.__ModuleLoader__.load({
       })
     }
 
+    /**
+     * The usage dialog's 「发现新版本」 footer line, or null when the last check
+     * found no update (or never ran). The i18n sentence names 「打开 npm」 as its
+     * tail; that tail becomes the anchor that opens the npm package page, so the
+     * line itself stays a single sentence with one real link inside it.
+     */
+    function buildUpdateFooterLine(state, t) {
+      const update = state.update
+      if (update === null || update.available !== true) return null
+      const text = t('updateDialogLine', { latest: update.latest })
+      const linkLabel = t('updateOpenNpm')
+      const packageUrl = updatePackageUrlOf(state)
+      const link = h(
+        'a',
+        {
+          key: 'link',
+          className: 'dsh-tokenlens-update-link dsh-tokenlens-update-footer-link',
+          'data-update-link': 'true',
+          href: packageUrl,
+          target: '_blank',
+          rel: 'noreferrer noopener',
+          title: packageUrl,
+          onClick: (event) => openConsole(packageUrl, event),
+        },
+        linkLabel,
+        Icon('external', 12),
+      )
+      const index = text.indexOf(linkLabel)
+      const children =
+        index < 0
+          ? [h('span', { key: 'text' }, text), h('span', { key: 'sep' }, ' · '), link]
+          : [h('span', { key: 'text' }, text.slice(0, index)), link]
+      return h(
+        'div',
+        { key: 'update-line', className: 'dsh-tokenlens-update-line', 'data-update-line': 'true' },
+        Icon('bolt', 12),
+        children,
+      )
+    }
+
     /** The dialog contents (body + footer); may throw, the caller guards it. */
     function buildDialog(state, now, t) {
       if (state.view === 'management') return buildManagementDialog(state, t)
@@ -6440,6 +6884,9 @@ window.__ModuleLoader__.load({
               Icon('external', 12),
               consoleLabel,
             ),
+        // 「发现新版本」 line (only while an update is available): its 「打开 npm」
+        // tail is the real npm-package link, next to the refresh/close buttons.
+        buildUpdateFooterLine(state, t),
         h(
           Button,
           {

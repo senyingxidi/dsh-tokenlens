@@ -2,6 +2,14 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/)：修复 = PATCH，新功能 = MINOR，不兼容变更 = MAJOR。发布时同步更新 `package.json` 的 `version`、`index.js` 的 `PLUGIN_VERSION` 与本文件（`node scripts/bump-version.mjs <version> "<note>"`）；已发布的条目保持原样。
 
+## 1.3.0 — 2026-11-01
+
+- feat(update): 可选的**启动时检查更新**（默认关闭）：开启后仅向 npm registry 查询一次 `dsh-tokenlens` 的 latest 版本号，不携带凭据/账号/用量信息；主机离线或接口失败时记录错误并说明，不阻塞启动
+- feat(update): 供应商管理页「插件设置」新增「更新检查」块——开关、隐私提示、状态行（尚未检查 / 正在检查 / 已是最新 / 发现新版本 / 检查失败可重试）与「立即检查」；详情弹窗底部在发现新版本时显示一行「发现新版本 vX · 打开 npm」（链接到 npm 包页）
+- feat(wire): `hello` 与 `providers` 载荷新增 `update`（`UpdateInfo`）与 `updatePackageUrl`；`settingsUpdate` 新增 `settings.updateCheck`；新增 bridge action `updateCheck`（Agent 工具同步支持）
+- fix(update): 并发检查单飞（共享同一次在途请求）；仅在开关从关→开时触发检查，已开启时保存其它显示设置不会重复请求 npm
+- 测试：277 个自动化用例（新增 Host 版本比较/检查/设置/并发与客户端 UI 回归）
+
 ## 1.2.2 — 2026-11-01
 
 - fix(workspaces): 修复「工作区悬浮卡片不显示 Token 明细」——Host 在裁剪本地路径时把 `path` 字段误删成空串，客户端只剩标题精确匹配；默认工作区等「界面标题 ≠ 统计标签」的场景因此匹配不到统计（影响 v1.2.1 及更早版本）

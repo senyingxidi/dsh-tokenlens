@@ -32,12 +32,16 @@ from `dsh-app://app/` and forwards non-asset paths to the Host).
 
 ```jsonc
 {
-  "action": "snapshot" | "refresh" | "hello" | "stats" | "diagnostics",
+  "action": "snapshot" | "refresh" | "hello" | "stats" | "diagnostics" |
+            "providers" | "providerUpdate" | "providerTest" | "settingsUpdate" |
+            "customProviderSave" | "customProviderDelete" | "updateCheck",
   "providerId": "opencode-go",   // optional; defaults to the active provider
   "fresh": false,                 // stats only: bypass the scan TTL
   "origin": "dsh-app://app",      // hello only, optional
   "primitives": 290,              // hello only, optional (seeded primitives count)
-  "locale": "zh-CN"               // hello only, optional
+  "locale": "zh-CN",              // hello only, optional
+  "settings": { /* settingsUpdate only */ },
+  "update": { /* providerUpdate only */ }
 }
 ```
 
@@ -47,6 +51,9 @@ from `dsh-app://app/` and forwards non-asset paths to the Host).
   answers with a snapshot so the first paint needs one round trip.
 - `stats` — today/all-time token statistics folded from the local session logs.
 - `diagnostics` — config/cache/error state (verification aid, no secrets).
+- `updateCheck` — v1.3.0: run the optional npm-registry update check right now and
+  answer `{ ok: true, update: <UpdateInfo> }`. It is also run once at activation
+  when `settings.updateCheck` is enabled; disabled by default.
 - Unknown action → HTTP 400 `{ "ok": false, "error": { "code": "unknown-action", … } }`.
 
 ### Response envelope
@@ -54,10 +61,11 @@ from `dsh-app://app/` and forwards non-asset paths to the Host).
 ```jsonc
 { "ok": true,  "snapshot": <Snapshot> }            // snapshot / refresh / hello
 { "ok": true,  "stats": <Stats> }                  // stats
+{ "ok": true,  "update": <UpdateInfo> }            // updateCheck
 { "ok": false, "error": <Error>, "snapshot": <Snapshot|null> }
 ```
 
-`hello` answers `{ ok: true, plugin, version, bridge, pid, …snapshotResult }`.
+`hello` answers `{ ok: true, plugin, version, bridge, pid, update: <UpdateInfo|null>, …snapshotResult }`.
 
 ## Snapshot (wire shape, v3)
 
@@ -319,7 +327,7 @@ needs no provider catalog of its own.
 
 The dialog 「供应商管理」 page talks to three additional actions:
 
-- `{action:"providers"}` → `{ok:true, providers:[{providerId,label,shortLabel,kind,enabled,hasKey,keySource,apiKeyRef,baseURL,consoleUrl,builtin,dshManaged,dshProviderId}], dshProviders:[{providerId,label,supported,usageProviderId}], settings:{labelStyle,defaultView,defaultScope,detailsExpanded,detailsWindow}, storeFile, storeFileDisplay}`. `storeFile` is the real path (local tooling); `storeFileDisplay` replaces the user's home directory with `~` and is what the management page renders.
+- `{action:"providers"}` → `{ok:true, providers:[{providerId,label,shortLabel,kind,enabled,hasKey,keySource,apiKeyRef,baseURL,consoleUrl,builtin,dshManaged,dshProviderId}], dshProviders:[{providerId,label,supported,usageProviderId}], settings:{labelStyle,defaultView,defaultScope,detailsExpanded,detailsWindow,updateCheck}, update:<UpdateInfo|null>, updatePackageUrl, storeFile, storeFileDisplay}`. `storeFile` is the real path (local tooling); `storeFileDisplay` replaces the user's home directory with `~` and is what the management page renders. `update` (v1.3.0) is the last optional update-check result and `updatePackageUrl` the npm page the management UI links to.
 - `{action:"providerUpdate", providerId, update:{enabled?,apiKey?,apiKeyRef?,baseURL?,consoleUrl?,label?,shortLabel?}}` → same list payload;
   empty strings clear a stored value (falling back to the profile/default). `label` (全名, ≤40 chars) and
   `shortLabel` (短标签, ≤12 chars) let the management page rename a provider. The shipped management page no
@@ -327,7 +335,32 @@ The dialog 「供应商管理」 page talks to three additional actions:
   saves enabled/consoleUrl/label/shortLabel. Overrides are persisted atomically to
   `$DSH_HOME/dsh-tokenlens/providers.json` (plugin-owned, not the profile patch); the same file also
 - `{action:"providerTest", providerId}` → the normal snapshot envelope (`{ok,snapshot}` or `{ok:false,error}`), forcing one upstream read.
-- `{action:"settingsUpdate", settings:{labelStyle?:"short"|"full", defaultView?:"chart"|"data", defaultScope?:"provider"|"all", detailsExpanded?:"auto"|"expanded"|"collapsed", detailsWindow?:"today"|"last7Days"|"second"|"total"}}` → the same providers payload; every field is optional and persisted in the store (`settings.*`). `labelStyle` controls whether the composer chip shows each provider's `shortLabel` or full `label`; `defaultView` / `defaultScope` / `detailsExpanded` are the usage-dialog defaults; `detailsWindow` (v1.2.1) is the remembered 明细 donut window (falls back visually to `total` when that window is unavailable on the current provider/host). Invalid values answer `unsupported-provider`.
+- `{action:"settingsUpdate", settings:{labelStyle?:"short"|"full", defaultView?:"chart"|"data", defaultScope?:"provider"|"all", detailsExpanded?:"auto"|"expanded"|"collapsed", detailsWindow?:"today"|"last7Days"|"second"|"total", updateCheck?:boolean}}` → the same providers payload; every field is optional and persisted in the store (`settings.*`). `labelStyle` controls whether the composer chip shows each provider's `shortLabel` or full `label`; `defaultView` / `defaultScope` / `detailsExpanded` are the usage-dialog defaults; `detailsWindow` (v1.2.1) is the remembered 明细 donut window (falls back visually to `total` when that window is unavailable on the current provider/host); `updateCheck` (v1.3.0, default `false`) enables the optional startup update check — enabling it runs one check immediately. Invalid values answer `unsupported-provider`.
+
+### Optional update check (v1.3.0)
+
+Off by default: the plugin stays local-only unless the user enables
+`settings.updateCheck`. When enabled, one HTTPS `GET` to the fixed endpoint
+`https://registry.npmjs.org/dsh-tokenlens/latest` runs at activation, on the
+off→on transition of the setting, and on the `updateCheck` action. Concurrent
+checks are single-flight (one registry request shared by every caller). Nothing
+but the request itself leaves the machine — no credentials, identifiers or
+usage data.
+
+```jsonc
+// UpdateInfo (host → client)
+{
+  "current": "1.3.0",
+  "latest": "1.3.1" | null,      // null when the answer was unusable/failed
+  "available": true,             // strictly newer published version, error === null
+  "checkedAt": "2026-11-02T00:00:00.000Z",
+  "error": null | { "code": "network"|"timeout"|"http"|"parse", "message": "…", "retryable": true }
+}
+```
+
+A failed check never throws and never blocks activation; the client explains the
+error instead of inventing a version. The result lives in memory only and is
+surfaced through `hello`, `providers` and `diagnostics`.
 
 `dshProviders` lists every route registered in DSH model settings (in order) with a `supported` flag (whether a usage adapter exists); the shipped management page renders those routes as the primary list and keeps unconfigured preset adapters in a collapsed secondary section. `dshManaged`/`dshProviderId` tell the management page that the route already exists in DSH model settings
 (opencode-go / commandcode / deepseek), so the page can inherit the key and base URL instead of asking for them
@@ -438,6 +471,11 @@ configure the `opencode-go` provider.
    - **chart mode**: the daily bar chart, a click on a day bar drills into that
      day's 24 local-hour bars (when the Host delivers `daily[].hours`), and the
      明细 donuts switch between 今日 / 最近7天 / 最近X天 / 总计;
-   - refresh (usage + stats), last-updated/stale line, error banners, console link.
-3. Everything client-side must work with only the shell's seeded modules
+   - refresh (usage + stats), last-updated/stale line, error banners, console link;
+   - when `update.available` is true (v1.3.0) the footer shows one muted line
+     「发现新版本 vX · 打开 npm」 linking to `updatePackageUrl`.
+3. **Provider management page** (same modal, 管理 tab) — when the optional update
+   check is enabled the 插件设置 tab shows its toggle, the last result (up to date /
+   new version / failed) and a 「立即检查」 action that sends `updateCheck`.
+4. Everything client-side must work with only the shell's seeded modules
    (`react`, `react-dom`, `@deepseek-ai/dsh-client-ui-primitives`) — no build step.
