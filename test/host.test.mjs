@@ -1199,6 +1199,47 @@ test('a snapshot request that names a provider switches the active provider', as
   assert.equal(diagnostics.body.diagnostics.activeProvider, 'commandcode', 'the poll now follows the reported provider')
 })
 
+test('workspace rows keep only the folder basename on the wire', async (t) => {
+  const dshHome = await mkdtemp(join(tmpdir(), 'tokenlens-workspace-wire-'))
+  t.after(() => rm(dshHome, { recursive: true, force: true }))
+  const now = Date.now()
+  const cwd = 'C:/Users/u/Documents/deepseek-harness/default-workspace'
+  await writeUsageSession(dshHome, 'session-ws', [
+    { type: 'session', id: 'session-ws', createdAt: now, isSeeded: false, delegationDepth: 0, cwd },
+    { type: 'request/header', seq: 1, time: now, data: { header: { config: { provider: 'opencode-go', model: 'deepseek-v4.1-flash' } } } },
+    { type: 'assistant/message', seq: 2, time: now, data: { turn: 1, step: 1, usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, totalTokens: 15 } } },
+  ])
+  const { captured } = harness(t, {
+    credentials: okCredentials,
+    services: {
+      workspaceRegistry: {
+        list: () => [{ id: 'ws_default', path: cwd, title: '默认工作区' }],
+      },
+    },
+    config: {
+      pollIntervalMs: 0,
+      stats: {
+        enabled: true,
+        ttlMs: 0,
+        dshHome,
+        harnesses: { dsh: true, zcode: false, opencode: false, workbuddy: false, qoder: false },
+      },
+    },
+  })
+  stubFetch(t, () => jsonResponse(LIVE_PAYLOAD))
+
+  const result = await bridge(captured, { action: 'stats' })
+  assert.equal(result.body.ok, true)
+  const rows = result.body.stats.workspaces
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].workspaceId, 'ws_default')
+  assert.equal(rows[0].label, '默认工作区')
+  assert.equal(rows[0].path, 'default-workspace', 'only the folder basename crosses the wire')
+  assert.equal(rows[0].total, 15)
+  assert.equal('cwd' in rows[0], false, 'the full cwd never crosses the wire')
+  assert.equal(JSON.stringify(result.body.stats).includes('Users/u'), false, 'the home path never reaches the wire')
+})
+
 // ---- token statistics through the bridge -----------------------------------
 
 /** Write one synthetic session log (one zstd frame per event, like appends). */

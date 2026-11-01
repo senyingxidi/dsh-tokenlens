@@ -9,7 +9,7 @@
 
 > **一眼看清你的用量**：在 DSH 输入框下方显示当前供应商的套餐容量，并汇总本机跨 Harness 的 Token 消耗。
 
-**dsh-TokenLens（词元透镜）** 是 DSH（DeepSeek Harness）的用量插件（v1.2.1，公开版本）。它把两类数字**按不同口径**分开呈现：
+**dsh-TokenLens（词元透镜）** 是 DSH（DeepSeek Harness）的用量插件（v1.2.2，公开版本）。它把两类数字**按不同口径**分开呈现：
 
 - **套餐容量**（供应商服务端权威值）：百分比窗口、`已用 / 上限`、账户余额或剩余额度；
 - **本机 Token 统计**（本机记录）：当前供应商在本机所有已接入 Harness 上的合计用量，也可切到「全部 Harness」看总账。
@@ -106,7 +106,7 @@ dsh plugin --profile <profile> add dsh-tokenlens
 ```jsonc
 {
   "dependencies": {
-    "dsh-tokenlens": "^1.2.1"
+    "dsh-tokenlens": "^1.2.2"
   },
   "dsh": {
     "profile": {
@@ -155,6 +155,8 @@ dsh plugin --profile <profile> add "link:<path-to-dsh-tokenlens>"
 ```
 
 本地开发时，Host 端（`index.js` / `lib/`）改动需要重启或重新加载 profile 才能生效；浏览器端 `client.js` 的改动可能被客户端热替换。
+
+> ⚠️ **不要混用 link 安装与市场安装**：用 `link:` 装好的 profile 里再从市场点「安装/升级」会失败（Windows 下 pnpm 无法用 npm 包覆盖目录链接，报 `EPERM ... rename`）。需要切换时，先卸载 link（退出 DSH 后删除 `profiles/<profile>/node_modules/dsh-tokenlens` 这个链接——junction 请用 `cmd /c rmdir`，不要用 `Remove-Item -Recurse` 以免误删源码——并从 profile 的 `package.json` 删掉 `"dsh-tokenlens": "link:..."` 这一行），再从市场安装。
 
 ### 方式 D：从 DSH 插件市场安装
 
@@ -382,14 +384,14 @@ Host 半注册 `tokenlens_usage`，参数 `action`（默认 `snapshot`）与可�
 - Harness 卸载后其数据目录消失即判定为未安装，默认从弹窗隐藏（可用 `stats.showUninstalled: true` 显示「未安装」行）；数据目录仍在磁盘时按历史记录继续计入。
 - ZCode 数据库通常很大且持续写入：插件只做聚合查询并缓存结果，数据库被锁时会短暂显示不可用。
 - 供应商映射是启发式的（alias → 同 id → vendor-namespaced 模型唯一匹配）；语义模糊的 provider 会留在未映射列表，可用 `providerAliases` 指定。
-- 工作区 Token 徽标为实验特性，依赖 DSH 侧栏的 DOM 结构；DSH 界面变化时可能自动降级为不显示。
+- 工作区 Token 徽标/悬浮卡片为实验特性，依赖 DSH 侧栏的 DOM 结构；悬浮卡片按工作区标题（大小写不敏感）或文件夹名匹配，DSH 界面变化时可能自动降级为不显示（v1.2.2 修复了 Host 未下发文件夹名、导致标题与统计标签不一致时悬浮卡片不显示 Token 明细的问题）。
 - 多个 composer 同时挂载时，详情对话框只归属发起点击的会话。
 
 **商标声明**：OpenCode、Command Code、DeepSeek、ZCode、WorkBuddy、CodeBuddy、Qoder 等名称与商标归各自权利人所有。本插件为独立第三方项目，与上述公司无关联，也未获得其背书。
 
 ## 验证
 
-- `node --test`：**255 个自动化用例**，覆盖 Host 数据层、供应商适配器、统计折叠、各 harness 读取、插件集成与浏览器端渲染 / 交互。
+- `node --test`：**256 个自动化用例**，覆盖 Host 数据层、供应商适配器、统计折叠、各 harness 读取、插件集成与浏览器端渲染 / 交互。
 - 在真实环境中验证过 **5 个 harness** 的数据源；本机统计与独立的 SQLite 查询、独立的日志解析逐项对账（差额为 0），跨 harness 合并与供应商映射算术自洽。
 - 供应商接口按各官方文档与参考客户端行为验证；未配置凭据时 chip 静默隐藏，接口异常时按可重试错误降级。
 
@@ -400,7 +402,7 @@ Host 半注册 `tokenlens_usage`，参数 `action`（默认 `snapshot`）与可�
 ```powershell
 git clone https://github.com/daigahou/dsh-tokenlens.git
 cd dsh-tokenlens
-node --test        # 255 个用例
+node --test        # 256 个用例
 ```
 
 本地联调安装方式见[方式 C](#方式-c本地开发从源码-link)。

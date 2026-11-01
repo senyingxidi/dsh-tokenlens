@@ -6883,6 +6883,14 @@ test('the sidebar workspace-token decorator is guarded and source-marked', () =>
   assert.match(source, /refreshWorkspaceHoverCards\(\)/, 'the hover pass joins the debounced refresh')
   assert.match(source, /workspaceHoverEntryOf\(stats, title, pathText\)/, 'it matches by trimmed title then unique path suffix')
   assert.match(source, /workspacePathSuffixOf\(/, 'path-suffix matching helper exists')
+  // v1.2.2: tolerate a title that differs from the Host label (default workspace)
+  // and old Hosts whose wire path is empty.
+  assert.match(source, /trim\(\)\.toLowerCase\(\)/, 'the hover title match is case-insensitive')
+  assert.match(
+    source,
+    /entryPath === '' && entryLabel !== '' && entryLabel === suffix/,
+    'an empty wire path falls back to the folder-name label',
+  )
   for (const key of ['statsToday', 'statsLast7Days', 'statsLast30Days']) {
     assert.match(source, new RegExp(`\\['${key}', workspaceBucketTotal\\(entry\\.`), `hover stats use the ${key} label`)
   }

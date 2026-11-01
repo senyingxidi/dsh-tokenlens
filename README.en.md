@@ -9,7 +9,7 @@
 
 > One glance at your usage: plan capacity for the selected provider plus local token statistics across harnesses, right below the DSH composer.
 
-**dsh-TokenLens** is a usage plugin for DSH (DeepSeek Harness), version v1.2.1. It keeps two kinds of numbers separate:
+**dsh-TokenLens** is a usage plugin for DSH (DeepSeek Harness), version v1.2.2. It keeps two kinds of numbers separate:
 
 - **Plan capacity** — the provider's authoritative server-side values (percentage windows, used / cap, balance or remaining credit);
 - **Local token stats** — tokens consumed on this machine across every connected harness, for the selected provider or for all providers combined.
@@ -66,7 +66,7 @@ dsh plugin --profile <profile> add dsh-tokenlens
 Then make sure `dsh.profile.bundles` in `$DSH_HOME/profiles/<profile>/package.json` contains `"dsh-tokenlens"`:
 
 ```jsonc
-{ "dependencies": { "dsh-tokenlens": "^1.2.1" },
+{ "dependencies": { "dsh-tokenlens": "^1.2.2" },
   "dsh": { "profile": { "bundles": ["…", "dsh-tokenlens"] } } }
 ```
 
@@ -81,6 +81,8 @@ dsh plugin --profile <profile> add "github:daigahou/dsh-tokenlens"
 GitHub installs track the latest commit on the default branch (not a tag); updates require uninstall + reinstall, and GitHub access can be unreliable from some networks.
 
 **Option C — from source.** `dsh plugin --profile <profile> add "link:<path-to-dsh-tokenlens>"`.
+
+> ⚠️ **Do not mix a link install with a market install**: clicking install/upgrade from the market on a `link:` profile fails on Windows (pnpm cannot rename a package over a directory junction — `EPERM ... rename`). To switch, uninstall the link first (quit DSH, remove `profiles/<profile>/node_modules/dsh-tokenlens` with `cmd /c rmdir` — never `Remove-Item -Recurse` — and delete the `"dsh-tokenlens": "link:..."` dependency line), then install from the market.
 
 **Option D — from the DSH plugin market.** This repository maintains a DSH plugin market index ([`market/index.json`](market/index.json)); add it once and the plugin shows up in the **Discover** tab with a one-click install:
 
@@ -134,7 +136,7 @@ Host bridge route: `/api/tokenlens`; agent tool: `tokenlens_usage`.
 
 ## Development
 
-Node.js ≥ 24, zero runtime dependencies: `node --test` runs the 255 tests.
+Node.js ≥ 24, zero runtime dependencies: `node --test` runs the 256 tests.
 
 Release: `node scripts/bump-version.mjs <version> "<note>"` updates `package.json`, `PLUGIN_VERSION` and `CHANGELOG.md`; see [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 

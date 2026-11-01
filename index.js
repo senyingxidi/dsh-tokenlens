@@ -72,7 +72,7 @@ export const inject = []
 export const PLUGIN_NAME = 'dsh-tokenlens'
 
 /** Plugin version; mirrors package.json (kept here so diagnostics need no fs read). */
-export const PLUGIN_VERSION = '1.2.1'
+export const PLUGIN_VERSION = '1.2.2'
 
 /** Documented defaults; every field of the raw row config is optional. */
 const DEFAULTS = {
@@ -1291,12 +1291,16 @@ export function apply(ctx, rawConfig) {
       }
     }
     if (Array.isArray(out.workspaces)) {
-      out.workspaces = out.workspaces.map(({ cwd, path, ...row }) => row)
+      // Only the basename crosses the wire: the client matches a workspace hover
+      // card by its folder name (the full cwd stays Host-only). v1.2.2 fixes a
+      // double-map bug that always emptied this field, which made hover cards
+      // without an exact title match show no token stats.
+      out.workspaces = out.workspaces.map(({ cwd, path, ...row }) => {
+        const full = typeof path === 'string' && path !== '' ? path : typeof cwd === 'string' ? cwd : ''
+        const parts = full.split(/[\\/]+/).filter((part) => part !== '')
+        return { ...row, path: parts.length === 0 ? '' : parts[parts.length - 1] }
+      })
     }
-    out.workspaces = out.workspaces.map((row) => ({
-      ...row,
-      path: String(row.path ?? row.cwd ?? '').split(/[\\/]/).filter(Boolean).pop() ?? '',
-    }))
     return scrubMessagePaths(out)
   }
 

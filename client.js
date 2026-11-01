@@ -6769,15 +6769,18 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Match one hover card to its stats.workspaces entry: exact trimmed label
-     * first, then a UNIQUE path suffix (entry path endsWith the card path, or
-     * the card path endsWith the entry basename). Ambiguous → null (no card).
+     * Match one hover card to its stats.workspaces entry (v1.2.2): case-insensitive
+     * exact label first, then a UNIQUE path suffix (entry path endsWith the card
+     * path, the card path endsWith the entry basename, or the folder-name suffix
+     * equals the entry label for Hosts whose wire path is empty). Ambiguous → null.
      */
     function workspaceHoverEntryOf(stats, title, pathText) {
       if (stats === null || typeof stats !== 'object' || !Array.isArray(stats.workspaces)) return null
-      const wantedTitle = typeof title === 'string' ? title.trim() : ''
+      const wantedTitle = typeof title === 'string' ? title.trim().toLowerCase() : ''
       if (wantedTitle !== '') {
-        const byLabel = stats.workspaces.filter((entry) => stringOrEmpty(entry?.label).trim() === wantedTitle)
+        const byLabel = stats.workspaces.filter(
+          (entry) => stringOrEmpty(entry?.label).trim().toLowerCase() === wantedTitle,
+        )
         if (byLabel.length === 1) return byLabel[0]
       }
       const cardPath = typeof pathText === 'string' ? pathText.trim().toLowerCase() : ''
@@ -6785,10 +6788,13 @@ window.__ModuleLoader__.load({
       if (suffix === '') return null
       const byPath = stats.workspaces.filter((entry) => {
         const entryPath = stringOrEmpty(entry?.path).trim().toLowerCase()
-        if (entryPath === '') return false
-        if (workspacePathSuffixOf(entryPath).toLowerCase() === suffix) return true
-        if (cardPath !== '' && (entryPath.endsWith(cardPath) || cardPath.endsWith(entryPath))) return true
-        return false
+        const entryLabel = stringOrEmpty(entry?.label).trim().toLowerCase()
+        if (entryPath !== '') {
+          if (workspacePathSuffixOf(entryPath).toLowerCase() === suffix) return true
+          if (cardPath !== '' && (entryPath.endsWith(cardPath) || cardPath.endsWith(entryPath))) return true
+        }
+        // Old Hosts sent no path; the label often carries the folder name.
+        return entryPath === '' && entryLabel !== '' && entryLabel === suffix
       })
       return byPath.length === 1 ? byPath[0] : null
     }

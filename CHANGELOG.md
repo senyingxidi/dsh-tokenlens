@@ -2,6 +2,13 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/)：修复 = PATCH，新功能 = MINOR，不兼容变更 = MAJOR。发布时同步更新 `package.json` 的 `version`、`index.js` 的 `PLUGIN_VERSION` 与本文件（`node scripts/bump-version.mjs <version> "<note>"`）；已发布的条目保持原样。
 
+## 1.2.2 — 2026-11-01
+
+- fix(workspaces): 修复「工作区悬浮卡片不显示 Token 明细」——Host 在裁剪本地路径时把 `path` 字段误删成空串，客户端只剩标题精确匹配；默认工作区等「界面标题 ≠ 统计标签」的场景因此匹配不到统计（影响 v1.2.1 及更早版本）
+- fix(workspaces): 悬浮卡片匹配增强——标题匹配改为大小写不敏感；Host 只下发文件夹名 basename（不含完整路径）；旧 Host 未下发 `path` 时用文件夹名与标签兜底
+- docs: README 增加「用 `link:` 安装的插件不要从插件市场重复安装/升级」的排错说明（Windows 下 pnpm 会遇到 EPERM）
+- 测试：256 个自动化用例（新增工作区 wire basename 回归；客户端匹配逻辑断言）
+
 ## 1.2.1 — 2026-10-31
 
 - feat(settings): 图表模式「明细」环形图的窗口选择（今日 / 最近7天 / 最近X天（或最近30天）/ 总计）持久化到插件设置：点击 pill 立即保存，重开弹窗、切换供应商或重启 DSH 后仍保留上次选择；当前供应商没有该窗口时自动回落到总计
