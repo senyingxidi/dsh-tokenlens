@@ -74,7 +74,7 @@ export const inject = []
 export const PLUGIN_NAME = 'dsh-tokenlens'
 
 /** Plugin version; mirrors package.json (kept here so diagnostics need no fs read). */
-export const PLUGIN_VERSION = '1.3.1'
+export const PLUGIN_VERSION = '1.3.2'
 
 /** Documented defaults; every field of the raw row config is optional. */
 const DEFAULTS = {
@@ -733,12 +733,13 @@ export function apply(ctx, rawConfig) {
 
     return {
       ok: true,
+      // The running Host version: a page whose `hello` was answered before a
+      // plugin update can adopt the new version from this payload (v1.3.2).
+      version: PLUGIN_VERSION,
       providers,
       dshProviders,
       settings: sanitizeSettings(providerStore.settings),
-      // Optional startup update check (settings.updateCheck): null until the
-      // first check; never fetched unless the setting is enabled or the user
-      // presses "check now".
+      // Update check result (settings.updateCheck): null until the first check.
       update: state.update,
       updatePackageUrl: UPDATE_PACKAGE_URL,
       storeFile: redactPaths(providerStoreFile),

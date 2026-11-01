@@ -8234,4 +8234,43 @@ test('the plugin version line shows the update status (available / up to date / 
   }
 })
 
+test('a stale hello version is refreshed by the providers payload version', async () => {
+  const plugin = loadPlugin((payload) => {
+    if (payload.action === 'hello') return { ok: true, version: '1.3.0' }
+    if (payload.action === 'stats') return { ok: true, stats: statsFixture() }
+    if (payload.action === 'providers') {
+      return { ...providersFixture({ settings: persistedSettingsFixture({ updateCheck: false }) }), version: '1.3.2' }
+    }
+    return { ok: true, snapshot: snapshotFixture(payload.providerId) }
+  })
+  try {
+    const tree = await settleDialog(plugin, 'opencode-go')
+    assert.match(textOf(versionLineOf(tree)), /插件 v1\.3\.2/, 'the answered Host version wins over the stale hello')
+  } finally {
+    plugin.dispose()
+  }
+})
 
+test('a newer check current version refreshes the stale hello label', async () => {
+  const plugin = loadPlugin((payload) => {
+    if (payload.action === 'hello') {
+      return {
+        ok: true,
+        version: '1.3.0',
+        update: updateInfoFixture({ current: '1.3.2', latest: '1.3.2', available: false }),
+      }
+    }
+    if (payload.action === 'stats') return { ok: true, stats: statsFixture() }
+    if (payload.action === 'providers') {
+      return { ...providersFixture({ settings: persistedSettingsFixture({ updateCheck: true }) }) }
+    }
+    return { ok: true, snapshot: snapshotFixture(payload.providerId) }
+  })
+  try {
+    const tree = await settleDialog(plugin, 'opencode-go')
+    assert.match(textOf(versionLineOf(tree)), /插件 v1\.3\.2/, 'update.current is the fresher Host version')
+    assert.match(textOf(versionLineOf(tree)), /已是最新版本/)
+  } finally {
+    plugin.dispose()
+  }
+})

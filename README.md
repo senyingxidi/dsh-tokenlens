@@ -9,7 +9,7 @@
 
 > **一眼看清你的用量**：在 DSH 输入框下方显示当前供应商的套餐容量，并汇总本机跨 Harness 的 Token 消耗。
 
-**dsh-TokenLens（词元透镜）** 是 DSH（DeepSeek Harness）的用量插件（v1.3.1，公开版本）。它把两类数字**按不同口径**分开呈现：
+**dsh-TokenLens（词元透镜）** 是 DSH（DeepSeek Harness）的用量插件（v1.3.2，公开版本）。它把两类数字**按不同口径**分开呈现：
 
 - **套餐容量**（供应商服务端权威值）：百分比窗口、`已用 / 上限`、账户余额或剩余额度；
 - **本机 Token 统计**（本机记录）：当前供应商在本机所有已接入 Harness 上的合计用量，也可切到「全部 Harness」看总账。
@@ -106,7 +106,7 @@ dsh plugin --profile <profile> add dsh-tokenlens
 ```jsonc
 {
   "dependencies": {
-    "dsh-tokenlens": "^1.3.1"
+    "dsh-tokenlens": "^1.3.2"
   },
   "dsh": {
     "profile": {
@@ -392,7 +392,7 @@ Host 半注册 `tokenlens_usage`，参数 `action`（默认 `snapshot`）与可�
 
 ## 验证
 
-- `node --test`：**278 个自动化用例**，覆盖 Host 数据层、供应商适配器、统计折叠、各 harness 读取、插件集成与浏览器端渲染 / 交互。
+- `node --test`：**280 个自动化用例**，覆盖 Host 数据层、供应商适配器、统计折叠、各 harness 读取、插件集成与浏览器端渲染 / 交互。
 - 在真实环境中验证过 **5 个 harness** 的数据源；本机统计与独立的 SQLite 查询、独立的日志解析逐项对账（差额为 0），跨 harness 合并与供应商映射算术自洽。
 - 供应商接口按各官方文档与参考客户端行为验证；未配置凭据时 chip 静默隐藏，接口异常时按可重试错误降级。
 
@@ -403,7 +403,7 @@ Host 半注册 `tokenlens_usage`，参数 `action`（默认 `snapshot`）与可�
 ```powershell
 git clone https://github.com/daigahou/dsh-tokenlens.git
 cd dsh-tokenlens
-node --test        # 278 个用例
+node --test        # 280 个用例
 ```
 
 本地联调安装方式见[方式 C](#方式-c本地开发从源码-link)。

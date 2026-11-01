@@ -1353,6 +1353,7 @@ test('the optional update check compares the published npm version', async (t) =
   const list = await bridge(captured, { action: 'providers' })
   assert.deepEqual(list.body.update, result.body.update, 'the management payload carries the same result')
   assert.equal(list.body.settings.updateCheck, false, 'a manual check never changes the setting')
+  assert.equal(list.body.version, PLUGIN_VERSION, 'the providers payload names the running Host version')
 })
 
 test('a failed update check is reported, never thrown', async (t) => {

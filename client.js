@@ -1292,6 +1292,9 @@ window.__ModuleLoader__.load({
         settings: normalizePluginSettings(settings),
         update: hasUpdate ? normalizeUpdate(raw.update) : null,
         hasUpdate,
+        // v1.3.2: the running Host version. A page whose one-time `hello` was
+        // answered before a plugin update can adopt the new value from here.
+        version: stringOrEmpty(raw.version).trim(),
         // Optional: the Host may advertise the npm page its links should open.
         updatePackageUrl: stringOrEmpty(raw.updatePackageUrl).trim(),
         labelCatalog,
@@ -2186,6 +2189,12 @@ window.__ModuleLoader__.load({
       if (parsed.updatePackageUrl !== '' && current.updatePackageUrl !== parsed.updatePackageUrl) {
         patch.updatePackageUrl = parsed.updatePackageUrl
       }
+      // v1.3.2: the answered Host version refreshes a stale hello version (the
+      // page may have loaded before a plugin update/recomposition). Never
+      // downgrade: hello and this answer race, and the newest version wins.
+      if (parsed.version !== '' && newerVersionOf(current.pluginVersion, parsed.version) === parsed.version) {
+        if (current.pluginVersion !== parsed.version) patch.pluginVersion = parsed.version
+      }
       if (parsed.labelCatalog !== null && typeof parsed.labelCatalog === 'object') {
         const catalog = { ...current.labelCatalog, ...parsed.labelCatalog }
         if (Object.keys(catalog).length > 0) patch.labelCatalog = catalog
@@ -2891,7 +2900,13 @@ window.__ModuleLoader__.load({
       if (data === null || typeof data !== 'object') return
       const patch = {}
       if (typeof data.version === 'string' && data.version !== '') {
-        if (store.get().pluginVersion !== data.version) patch.pluginVersion = data.version
+        // v1.3.2: hello and the startup providers bootstrap race; only the
+        // newest known Host version wins (a stale hello must not downgrade the
+        // label after an in-place plugin update).
+        const known = store.get().pluginVersion
+        if (newerVersionOf(known, data.version) === data.version && known !== data.version) {
+          patch.pluginVersion = data.version
+        }
       }
       // `update` is optional on the wire: only an explicit field (null included)
       // replaces what the store already knows.
@@ -6802,6 +6817,44 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Numeric parts of a plain `x.y.z` version, or null (v1.3.2).
+     */
+    function versionPartsOf(value) {
+      if (typeof value !== 'string') return null
+      const match = /^v?(\d{1,9})\.(\d{1,9})\.(\d{1,9})$/.exec(value.trim())
+      return match === null ? null : [Number(match[1]), Number(match[2]), Number(match[3])]
+    }
+
+    /**
+     * The newer of two version strings (v1.3.2). Invalid or empty sides fall
+     * back to the other one, so the dialog label never goes blank.
+     */
+    function newerVersionOf(left, right) {
+      const a = versionPartsOf(left)
+      const b = versionPartsOf(right)
+      if (a === null) return b === null ? '' : right.trim()
+      if (b === null) return left.trim()
+      for (let index = 0; index < 3; index += 1) {
+        if (a[index] !== b[index]) return a[index] > b[index] ? left.trim() : right.trim()
+      }
+      return left.trim()
+    }
+
+    /**
+     * The best-known running Host version for the dialog label (v1.3.2).
+     *
+     * `state.pluginVersion` is captured from the one-time `hello` announcement,
+     * while `state.update.current` arrives with the startup update check and the
+     * providers payload carries the same Host version. Picking the newest of the
+     * two makes the label self-heal after a plugin update without a page reload.
+     */
+    function currentPluginVersionOf(state) {
+      const fromHello = typeof state.pluginVersion === 'string' ? state.pluginVersion : ''
+      const fromCheck = state.update !== null && typeof state.update.current === 'string' ? state.update.current : ''
+      return newerVersionOf(fromHello, fromCheck).trim()
+    }
+
+    /**
      * The update status appended to the plugin-version line of the usage dialog
      * body, or null when it must stay silent.
      *
@@ -6889,12 +6942,13 @@ window.__ModuleLoader__.load({
         ),
       )
       const body = [buildManageButton(state, t), statsArea]
-      if (typeof state.pluginVersion === 'string' && state.pluginVersion !== '') {
+      const displayVersion = currentPluginVersionOf(state)
+      if (displayVersion !== '') {
         body.push(
           h(
             'div',
             { key: 'version', className: 'dsh-tokenlens-version' },
-            t('pluginVersion', { version: state.pluginVersion }),
+            t('pluginVersion', { version: displayVersion }),
             // Update status sits right next to the plugin version: 有新版本 vX
             // (link to the npm page) or 已是最新版本, only for a successful check.
             buildVersionUpdateStatus(state, t),
