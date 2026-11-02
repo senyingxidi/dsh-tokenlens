@@ -1197,6 +1197,127 @@ test('a failing ledger write never breaks the usage read', async (t) => {
   assert.equal(tested.body.snapshot.designPlan.usedCredits, 1000, 'the in-memory fold still reports the estimate')
 })
 
+test('the Host derives the monthly window from the period estimate (v1.5.1)', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'tokenlens-od-monthly-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const periodStart = '2026-11-02T09:53:18.000Z'
+  const periodEnd = '2026-12-02T09:53:18.000Z'
+  const { captured } = harness(t, {
+    credentials: { resolve: async () => ({ value: 'vela_ctrl_test', source: 'config' }) },
+    config: {
+      minRefreshIntervalMs: 0,
+      pollIntervalMs: 0,
+      providerStoreFile: join(dir, 'providers.json'),
+      designPlanLedgerFile: join(dir, 'design-plan-ledger.json'),
+      providers: { 'open-design': { enabled: true, workspaceId: 'ws_m', controlKeyRef: 'OPENDESIGN_CONTROL_KEY' } },
+    },
+  })
+  stubFetch(t, (call, url) => {
+    const text = String(url)
+    if (text.includes('/wallet/balance')) {
+      return jsonResponse({ billingScopeVersion: 2, workspaceId: 'ws_m', workspaceMemberId: 'm', balanceUsd: '1.00' })
+    }
+    if (text.includes('/billing/summary')) {
+      return jsonResponse({
+        membershipTier: 'go',
+        creditsPerUsd: 10000,
+        subscriptionCurrentPeriodStart: periodStart,
+        subscriptionCurrentPeriodEnd: periodEnd,
+      })
+    }
+    return jsonResponse({
+      schemaVersion: 1,
+      workspaceId: 'ws_m',
+      workspaceMemberId: 'm',
+      codingPlan: {
+        workspaceId: 'ws_m',
+        eligible: true,
+        tier: 'go',
+        windows: [
+          {
+            policyId: 'p7d',
+            durationSeconds: 604800,
+            usedCredits: '52813',
+            limitCredits: '150000',
+            remainingCredits: '97187',
+            windowStart: periodStart,
+            resetsAt: '2026-11-09T09:53:18.000Z',
+          },
+        ],
+      },
+    })
+  })
+
+  const tested = await bridge(captured, { action: 'providerTest', providerId: 'open-design' })
+  const monthly = tested.body.snapshot.windows.monthly
+  assert.ok(monthly, 'the derived monthly window is present')
+  assert.equal(monthly.status, 'ok', 'a complete estimate is allowed to be ok')
+  // 52813 of (150000 × 4 = 600000) credits.
+  assert.ok(Math.abs(monthly.percent - 8.8021666) < 1e-6, `percent was ${monthly.percent}`)
+  assert.equal(monthly.resetsAt, periodEnd, 'the monthly row resets at the end of the billing period')
+  assert.equal(tested.body.snapshot.designPlan.periodLimitCredits, 600000)
+  assert.equal(tested.body.snapshot.designPlan.percent, monthly.percent, 'the estimate and the wire agree')
+})
+
+test('a partial period estimate stays out of the monthly slot', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'tokenlens-od-monthly-partial-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const { captured } = harness(t, {
+    credentials: { resolve: async () => ({ value: 'vela_ctrl_test', source: 'config' }) },
+    config: {
+      minRefreshIntervalMs: 0,
+      pollIntervalMs: 0,
+      providerStoreFile: join(dir, 'providers.json'),
+      designPlanLedgerFile: join(dir, 'design-plan-ledger.json'),
+      providers: { 'open-design': { enabled: true, workspaceId: 'ws_p', controlKeyRef: 'OPENDESIGN_CONTROL_KEY' } },
+    },
+  })
+  stubFetch(t, (call, url) => {
+    const text = String(url)
+    if (text.includes('/wallet/balance')) {
+      return jsonResponse({ billingScopeVersion: 2, workspaceId: 'ws_p', workspaceMemberId: 'm', balanceUsd: '1.00' })
+    }
+    if (text.includes('/billing/summary')) {
+      return jsonResponse({
+        membershipTier: 'go',
+        creditsPerUsd: 10000,
+        subscriptionCurrentPeriodStart: '2026-11-02T09:53:18.000Z',
+        subscriptionCurrentPeriodEnd: '2026-12-02T09:53:18.000Z',
+      })
+    }
+    return jsonResponse({
+      schemaVersion: 1,
+      workspaceId: 'ws_p',
+      workspaceMemberId: 'm',
+      codingPlan: {
+        workspaceId: 'ws_p',
+        eligible: true,
+        tier: 'go',
+        windows: [
+          {
+            policyId: 'p7d',
+            // A window that does NOT start at the period start: earlier windows
+            // were never observed, so the period total is a lower bound.
+            durationSeconds: 604800,
+            usedCredits: '20000',
+            limitCredits: '150000',
+            remainingCredits: '130000',
+            windowStart: '2026-11-09T09:53:18.000Z',
+            resetsAt: '2026-11-16T09:53:18.000Z',
+          },
+        ],
+      },
+    })
+  })
+
+  const tested = await bridge(captured, { action: 'providerTest', providerId: 'open-design' })
+  assert.equal(tested.body.snapshot.designPlan.complete, false)
+  // The percentage still renders (it is a lower bound), but its status is
+  // `unknown` so a partial estimate can never paint the chip warning/critical.
+  assert.equal(tested.body.snapshot.windows.monthly.status, 'unknown')
+  assert.ok(tested.body.snapshot.windows.monthly.percent > 0)
+})
+
 test('unknown actions are refused with the legal list', async (t) => {
   const { captured } = harness(t, { credentials: okCredentials, config: { pollIntervalMs: 0 } })
   stubFetch(t, () => jsonResponse(LIVE_PAYLOAD))

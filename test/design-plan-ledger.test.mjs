@@ -84,6 +84,50 @@ test('loadLedger tolerates a missing, malformed or foreign-version file', async 
   assert.deepEqual(loadLedger(malformed), emptyLedger())
 })
 
+test('the period percentage divides by four weekly windows (the published monthly cap)', () => {
+  // The pricing table states the monthly cap as exactly 4 × the weekly window for
+  // every tier (Go $120 vs $30, Plus $160 vs $40, Pro $360 vs $90, Max $600 vs $150).
+  const { ledger } = fold(emptyLedger(), [weekly(W1, 150000)])
+  const summary = summarizeDesignPlan(ledger, PERIOD_START)
+  assert.equal(summary.limitPerWindow, 150000)
+  assert.equal(summary.periodLimitCredits, 600000, 'four weekly windows make the monthly allowance')
+  assert.equal(summary.percent, 25, '150000 of 600000 credits')
+})
+
+test('the period percentage is capped at 100 even when the windows overshoot', () => {
+  // A 31-day period can hold five weekly windows, so the tally can exceed the
+  // four-window allowance; the percentage must still clamp at 100.
+  const starts = [W1, W2, '2026-11-16T09:53:18.000Z', '2026-11-23T09:53:18.000Z', '2026-11-30T09:53:18.000Z']
+  const windows = starts.map((start) => weekly(start, 150000))
+  const { ledger } = fold(emptyLedger(), windows)
+  const summary = summarizeDesignPlan(ledger, PERIOD_START)
+  assert.equal(summary.usedCredits, 750000, 'five fully used windows')
+  assert.equal(summary.percent, 100, '750000 of 600000 clamps at 100%')
+})
+
+test('a period with no usable weekly limit reports no percentage rather than inventing one', () => {
+  // A window whose limit is missing leaves no honest denominator.
+  const { ledger } = observeDesignPlan(emptyLedger(), {
+    periodStart: PERIOD_START,
+    creditsPerUsd: 10000,
+    windows: [{ durationSeconds: WEEKLY_SECONDS, usedCredits: '100', windowStart: W1 }],
+    now: Date.parse('2026-11-03T00:00:00.000Z'),
+  })
+  const summary = summarizeDesignPlan(ledger, PERIOD_START)
+  assert.equal(summary.usedCredits, 100)
+  assert.equal(summary.limitPerWindow, null)
+  assert.equal(summary.periodLimitCredits, null)
+  assert.equal(summary.percent, null, 'no percentage without a denominator')
+})
+
+test('the period percentage matches the sum of window percentages when limits agree', () => {
+  // One finished window plus the current one: 2 of 4 windows.
+  let { ledger } = fold(emptyLedger(), [weekly(W1, 150000)])
+  ;({ ledger } = fold(ledger, [weekly(W1, 150000), weekly(W2, 75000)]))
+  const summary = summarizeDesignPlan(ledger, PERIOD_START)
+  assert.equal(summary.percent, 37.5, '(150000 + 75000) / 600000')
+})
+
 test('only the weekly window is recorded, so overlapping limits never double-count', () => {
   const { ledger } = fold(emptyLedger(), [rolling(W1, 48195), weekly(W1, 48195)])
   const summary = summarizeDesignPlan(ledger, PERIOD_START)

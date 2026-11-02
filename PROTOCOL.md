@@ -155,9 +155,19 @@ by observing the weekly windows it sees:
   "windows": 1,                                 // weekly windows observed
   "complete": true,                             // earliest window starts at periodStart
   "since": "2026-11-02T09:53:18.000Z",          // first window actually observed
-  "limitPerWindow": 150000                      // the account's real weekly cap
+  "limitPerWindow": 150000,                     // the account's real weekly cap
+  "periodLimitCredits": 600000,                 // limitPerWindow * 4
+  "percent": 8.80                               // usedCredits / periodLimitCredits
 }
 ```
+
+`windows.monthly` is then filled from that estimate (v1.5.1), with `resetsAt` taken
+from `periodEnd`, so the existing monthly row and the chip's `月 N%` piece carry it
+without a second UI. The ×4 monthly-to-weekly ratio is the **one documented
+derivation**: the published pricing table states the monthly cap as exactly four
+weekly windows for every tier (Go $120/$30, Plus $160/$40, Pro $360/$90, Max
+$600/$150). A partial estimate still reports a percentage but sets the window
+`status` to `unknown`, so it can never paint a warning/critical dot.
 
 Rules the Host guarantees:
 

@@ -83,7 +83,7 @@ export const inject = []
 export const PLUGIN_NAME = 'dsh-tokenlens'
 
 /** Plugin version; mirrors package.json (kept here so diagnostics need no fs read). */
-export const PLUGIN_VERSION = '1.5.0'
+export const PLUGIN_VERSION = '1.5.1'
 
 /** Documented defaults; every field of the raw row config is optional. */
 const DEFAULTS = {
@@ -437,6 +437,40 @@ export function apply(ctx, rawConfig) {
     const periodStart = designPlan?.periodStart
     if (typeof periodStart !== 'string' || periodStart === '') return null
     return summarizeDesignPlan(designPlanLedger, periodStart)
+  }
+
+  /**
+   * Fill the `monthly` window from the period estimate (v1.5.1).
+   *
+   * Open Design reports only rolling 5h/7d windows, so `windows.monthly` is
+   * always null upstream — yet the dialog already knows how to render a monthly
+   * row (label, bar, reset countdown) and the chip already knows how to show a
+   * monthly percentage. Rather than inventing a parallel UI, place the estimate
+   * in the slot it belongs to. The `designPlan` field stays on the wire as the
+   * machine-readable source, including its `complete` coverage flag; the client
+   * uses it to qualify the number as an estimate.
+   *
+   * The percentage is `usedCredits / (weeklyLimit * 4)`; the ×4 is the published
+   * monthly-to-weekly ratio (see design-plan-ledger.mjs) and the only derived
+   * step. Without a usable weekly limit there is no honest denominator, so the
+   * monthly slot stays empty instead of showing a made-up percentage.
+   */
+  function withMonthlyWindow(windows, designPlan) {
+    if (designPlan === null || designPlan.percent === null) return windows
+    const base = windows !== null && typeof windows === 'object' ? windows : { rolling: null, weekly: null }
+    return {
+      ...base,
+      monthly: {
+        id: 'monthly',
+        percent: designPlan.percent,
+        // A partial estimate must not raise an alarm: only a complete period is
+        // allowed to reach the warning/critical thresholds downstream.
+        status: designPlan.complete === true ? 'ok' : 'unknown',
+        resetsAt: designPlan.periodEnd === '' ? null : designPlan.periodEnd,
+        remainingMs:
+          designPlan.periodEnd === '' ? null : Math.max(0, Date.parse(designPlan.periodEnd) - Date.now()),
+      },
+    }
   }
 
   /** Built-in defaults + profile config + management-page overrides. */
@@ -1174,7 +1208,7 @@ export function apply(ctx, rawConfig) {
     return buildSnapshot({
       provider: providerInfo(providerId),
       plan: read.result.plan ?? null,
-      windows: read.result.windows ?? null,
+      windows: withMonthlyWindow(read.result.windows ?? null, designPlan),
       balance: read.result.balance ?? null,
       credits: read.result.credits ?? null,
       account: read.result.account ?? null,

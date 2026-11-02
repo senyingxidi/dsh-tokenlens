@@ -1529,6 +1529,59 @@ test('a platform-account balance lists wallets and bonus', async () => {
   }
 })
 
+test('open-design puts the period estimate in the monthly chip percentage (v1.5.1)', async () => {
+  // Open Design reports no monthly window upstream; the Host derives one from the
+  // accumulated period estimate so the chip's existing "月 N%" slot carries it.
+  const plugin = loadPlugin((payload) => {
+    if (payload.action === 'hello') return { ok: true }
+    if (payload.action === 'stats') return { ok: true, stats: statsFixture() }
+    if (payload.action === 'providers') return providersFixture()
+    const snapshot = snapshotFixture('open-design')
+    return {
+      ok: true,
+      snapshot: {
+        ...snapshot,
+        windows: {
+          ...snapshot.windows,
+          monthly: {
+            id: 'monthly',
+            percent: 8.8,
+            status: 'ok',
+            resetsAt: '2026-12-02T09:53:18.000Z',
+            remainingMs: 2572402335,
+          },
+        },
+        designPlan: designPlanFixture({
+          usedCredits: 52813,
+          estimatedUsd: 5.2813,
+          periodLimitCredits: 600000,
+          percent: 8.8,
+        }),
+      },
+    }
+  })
+  try {
+    const chip = await settleChip(plugin, 'open-design')
+    const text = textOf(chip)
+    assert.match(text, /月 8\.8%/, 'the chip shows the monthly percentage')
+    assert.match(text, /周 35%|周 34%/, 'the weekly window still renders')
+    const tooltip = findElement(chip, (element) => element.props?.side === 'top')
+    assert.match(
+      String(tooltip.props.label),
+      /本月 8\.8%/,
+      'the hover detail carries the monthly percentage too',
+    )
+
+    // The dialog shows the monthly row with the period reset date.
+    const tree = await settleDialog(plugin, 'open-design')
+    const monthly = findElement(tree, (element) => element.props?.['data-window'] === 'monthly')
+    assert.ok(monthly, 'the monthly row renders')
+    assert.match(textOf(monthly), /8\.8%/)
+  } finally {
+    plugin.dispose()
+  }
+})
+
 test('a windows provider with a wallet balance shows it in the capacity card and chip tooltip', async () => {
   const plugin = loadPlugin((payload) => {
     if (payload.action === 'hello') return { ok: true }
