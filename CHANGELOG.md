@@ -4,20 +4,23 @@
 
 **版本记录约定**：同一发布日只保留一个章节，标题取当日**最后一个**已发布版本号；当日多次发布的改动合并到该章节，并在标题下注明当日实际发布过的版本号（npm 上仍可安装这些独立版本）。若当日已有发布，后续小改动不再单独增加版本号，而是并入下一篇日志。这样日志按天规整、不出现同日多个小版本。
 
-## 1.3.9 — 2026-11-02
+## 1.4.0 — 2026-11-02
 
-（当日已发布版本：v1.3.5 / v1.3.6 / v1.3.7 / v1.3.8 / v1.3.9）
+（当日已发布版本：v1.3.5 / v1.3.6 / v1.3.7 / v1.3.8 / v1.3.9 / v1.4.0）
 
 - feat(ui): 供应商管理页可为 **Open Design** 填写「工作区 ID」并持久化到插件配置——此前 workspaceId 只能在 profile patch 或 `OPENDESIGN_WORKSPACE_ID` 里设置，用推理 Key 配好供应商后额度卡片仍报错却无处可改
-- feat(ui): **Control Key 也能在弹窗里直接填**（v1.3.9）——Open Design 卡片新增密码型输入框，粘贴保存即写入插件自己的 store；输入框是只写的（Host 只回 `hasKey` / `keySource`，secret 永不下发浏览器），保存成功后自动清空并改用「已保存；要替换请重新粘贴」占位提示。小白用户不再需要手改 `.credentials.yaml`
+- feat(ui): **Control Key 也能在弹窗里直接填**——Open Design 卡片新增密码型输入框，粘贴保存即写入插件自己的 store；输入框是只写的（Host 只回 `hasKey` / `keySource`，secret 永不下发浏览器），保存成功后自动清空并改用「已保存；要替换请重新粘贴」占位提示。小白用户不再需要手改 `.credentials.yaml`
 - feat(ui): 「工作区 ID」输入框支持**直接粘贴整条控制台地址**——`https://open-design.ai/cloud/dashboard?workspaceId=ws_x&tab=billing` 会自动提取出 `ws_x`，避免用户复制整条 URL 后被校验拒绝
+- **fix(open-design): 修掉「配好了仍报错」**——额度窗口原来只查 `billing/coding-plan-usage`，而那条路由由控制台的浏览器 Cookie 会话鉴权，**任何 Control Key 都会被 401**（控制台前端自己也走 cookie）。现在改用**同样接受 Control Key** 的 `billing/funding-check`，Design Plan 的 5 小时 / 7 天窗口正常读出
+- fix(open-design): 改为钱包、窗口、套餐三层**互相独立降级**——先读 `wallet/balance`（余额）与 `billing/summary`（套餐档位，如 GO / PLUS），窗口再由 funding-check 补齐；任一路由不可用只少一块数据，不再整条报错。旧版会把 quota 的 401 当成整体失败，导致钱包也读不到
+- feat(wire): `billing/summary` 的 `membershipTier` 映射为 `plan`（`GO` / `PLUS` / `PRO` / `MAX`），弹窗标题行显示「套餐：GO」
 - feat(ui): Open Design 额度失败时的引导——详情弹窗的错误条说明「额度查询需要工作区 ID 与 Control Key（不是推理 Key）」，并提供「去配置」按钮直接跳到供应商管理页
 - feat(host): Host 侧错误文案更具体（区分缺 workspaceId / 缺 Control Key，并指向管理页）；`providerUpdate` 接受 `workspaceId`，校验为 1–120 位标识符字符（字母、数字、`. _ : @ -`），路径穿越/空格/超长一律拒绝
 - feat(wire): `providers[]` 仅对声明了 workspace 的适配器（Open Design）下发 `workspaceId` 字段；其余供应商不下发，客户端据此决定是否渲染输入框（旧 Host 无此字段 ⇒ 不渲染，自然降级）
 - feat(ui): Open Design 缺配置时 chip 不再按 `missing-key` 静默隐藏，而是显示「待配置」并可点进详情看引导——否则用户既看不到提示也没有入口
 - fix(tool): Agent 工具 `tokenlens_usage` 的 `updateCheck` 动作此前虽在枚举里却会落到用量读取分支，返回当前供应商的用量或错误；现在正确执行更新检查并返回 `UpdateInfo`
 - docs: 中英 README 补充 **workspace ID 与 Control Key 到底在哪里取**——控制台的「套餐与余额」页没有独立的 ID 字段，workspace ID 取自地址栏的 `?workspaceId=`（成员邀请预览页也会显示「工作空间 ID」），而 `~/.amr/config.json` 只存 `controlKey` / `runtimeKey` / `apiUrl` / `linkUrl`、不含 workspace ID；Control Key 是桌面端 / `vela login` 写入该文件的 `profiles.prod.controlKey`，用推理 Key 冒充会得到 401
-- 测试：280 → 289（workspace ID 校验/持久化/清空与 URL 提取、管理页字段渲染、Control Key 只写保存与不回声、缺 workspaceId 的 Host 报错与引导按钮、待配置 chip、工具 updateCheck 分发）
+- 测试：280 → 292（workspace ID 校验/持久化/清空与 URL 提取、Control Key 只写保存与不回声、funding-check 嵌套文档解析、窗口不可用时的钱包降级、summary 缺失时不臆造档位、待配置 chip、工具 updateCheck 分发）
 
 ## 1.3.4 — 2026-11-01
 

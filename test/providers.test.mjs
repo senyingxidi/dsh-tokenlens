@@ -30,6 +30,7 @@ import {
   parseZaiQuota,
   parseMinimaxRemains,
   parseOpencodeGo,
+  parseOpenDesignSummary,
   parseOpenDesignUsage,
   parseOpenDesignWallet,
   toNumber,
@@ -431,4 +432,14 @@ test('OpenDesign wallet parses the USD balance and keeps the member identity', (
   assert.throws(() => parseOpenDesignWallet({ ...wallet, workspaceId: 'other' }, 'ws'), (error) => error.code === 'parse')
   assert.throws(() => parseOpenDesignWallet({ ...wallet, workspaceMemberId: '' }, 'ws'), (error) => error.code === 'parse')
   assert.throws(() => parseOpenDesignWallet({ ...wallet, balanceUsd: 'n/a' }, 'ws'), (error) => error.code === 'parse')
+})
+
+test('OpenDesign billing summary exposes the plan tier and never invents one (v1.4.0)', () => {
+  assert.deepEqual(parseOpenDesignSummary({ membershipTier: 'go' }).plan, { id: 'go', label: 'GO' })
+  assert.deepEqual(parseOpenDesignSummary({ membershipTier: '  plus  ' }).plan, { id: 'plus', label: 'PLUS' })
+  assert.equal(parseOpenDesignSummary({}).plan, null)
+  assert.equal(parseOpenDesignSummary({ membershipTier: '' }).plan, null)
+  assert.equal(parseOpenDesignSummary({ membershipTier: 42 }).plan, null)
+  assert.equal(parseOpenDesignSummary(null).plan, null)
+  assert.equal(parseOpenDesignSummary('junk').plan, null)
 })

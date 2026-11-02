@@ -718,33 +718,47 @@ test('OpenDesign quota and wallet are read with the workspace Control Key', asyn
       providers: { 'open-design': { enabled: true, workspaceId: 'ws_test', controlKeyRef: 'OPENDESIGN_CONTROL_KEY' } },
     },
   })
-  const calls = stubFetch(t, (call, url) =>
-    String(url).includes('/wallet/balance')
-      ? jsonResponse({ billingScopeVersion: 2, workspaceId: 'ws_test', workspaceMemberId: 'member_1', balanceUsd: '12.34' })
-      : jsonResponse({
-          workspaceId: 'ws_test',
-          workspaceMemberId: 'member_1',
-          eligible: true,
-          windows: [
-            {
-              policyId: 'plan-5h',
-              durationSeconds: 18000,
-              usedCredits: '250',
-              remainingCredits: '750',
-              limitCredits: '1000',
-              resetsAt: '2026-10-25T11:00:00.000Z',
-            },
-            {
-              policyId: 'plan-7d',
-              durationSeconds: 604800,
-              usedCredits: '300',
-              remainingCredits: '700',
-              limitCredits: '1000',
-              resetsAt: '2026-11-01T00:00:00.000Z',
-            },
-          ],
-        }),
-  )
+  const calls = stubFetch(t, (call, url) => {
+    const text = String(url)
+    if (text.includes('/wallet/balance')) {
+      return jsonResponse({ billingScopeVersion: 2, workspaceId: 'ws_test', workspaceMemberId: 'member_1', balanceUsd: '12.34' })
+    }
+    if (text.includes('/billing/summary')) {
+      return jsonResponse({ membershipTier: 'go', subscriptionStatus: 'active', balances: { totalAvailableCredits: '15000' } })
+    }
+    // `billing/funding-check` nests the plan document under `codingPlan`.
+    return jsonResponse({
+      schemaVersion: 1,
+      workspaceId: 'ws_test',
+      workspaceMemberId: 'member_1',
+      balanceUsd: '12.34',
+      funding: 'coding_plan',
+      codingPlan: {
+        workspaceId: 'ws_test',
+        workspaceMemberId: 'member_1',
+        eligible: true,
+        tier: 'go',
+        windows: [
+          {
+            policyId: 'plan-5h',
+            durationSeconds: 18000,
+            usedCredits: '250',
+            remainingCredits: '750',
+            limitCredits: '1000',
+            resetsAt: '2026-10-25T11:00:00.000Z',
+          },
+          {
+            policyId: 'plan-7d',
+            durationSeconds: 604800,
+            usedCredits: '300',
+            remainingCredits: '700',
+            limitCredits: '1000',
+            resetsAt: '2026-11-01T00:00:00.000Z',
+          },
+        ],
+      },
+    })
+  })
   const tested = await bridge(captured, { action: 'providerTest', providerId: 'open-design' })
   assert.equal(tested.body.ok, true)
   assert.equal(tested.body.snapshot.provider.id, 'open-design')
@@ -752,12 +766,87 @@ test('OpenDesign quota and wallet are read with the workspace Control Key', asyn
   assert.equal(tested.body.snapshot.windows.weekly.percent, 30)
   assert.equal(tested.body.snapshot.balance.amount, 12.34)
   assert.equal(tested.body.snapshot.balance.currency, 'USD')
+  assert.equal(tested.body.snapshot.plan.label, 'GO', 'the billing summary supplies the plan tier')
   assert.equal(tested.body.snapshot.key.ref, 'OPENDESIGN_CONTROL_KEY')
-  assert.equal(calls.length, 2, 'one quota read plus one wallet read')
-  const headers = calls[0].init.headers
-  assert.equal(headers.authorization, 'Bearer od_control_test')
-  assert.equal(headers['x-vela-workspace-id'], 'ws_test')
-  assert.match(String(calls[0].url), /\/api\/v1\/workspaces\/ws_test\/billing\/coding-plan-usage$/)
+  assert.equal(calls.length, 3, 'wallet + funding-check + summary')
+  const walletCall = calls.find((call) => String(call.url).includes('/wallet/balance'))
+  assert.equal(walletCall.init.headers.authorization, 'Bearer od_control_test')
+  assert.equal(walletCall.init.headers['x-vela-workspace-id'], 'ws_test')
+  assert.ok(
+    calls.some((call) => /\/api\/v1\/workspaces\/ws_test\/billing\/funding-check$/.test(String(call.url))),
+    'the Control-Key-readable quota route is used',
+  )
+})
+
+test('OpenDesign still reports the wallet when the quota route rejects the Control Key (v1.4.0)', async (t) => {
+  // Real-world case: `billing/coding-plan-usage` is served by a cookie-auth
+  // console route and answers 401 to a Control Key, while `wallet/balance` and
+  // `billing/summary` accept it. The snapshot must degrade, not fail.
+  const dir = await mkdtemp(join(tmpdir(), 'tokenlens-od-partial-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const { captured } = harness(t, {
+    credentials: { resolve: async () => ({ value: 'vela_ctrl_test', source: 'config' }) },
+    config: {
+      minRefreshIntervalMs: 0,
+      pollIntervalMs: 0,
+      providerStoreFile: join(dir, 'providers.json'),
+      providers: { 'open-design': { enabled: true, workspaceId: 'ws_partial', controlKeyRef: 'OPENDESIGN_CONTROL_KEY' } },
+    },
+  })
+  stubFetch(t, (call, url) => {
+    const text = String(url)
+    if (text.includes('/wallet/balance')) {
+      return jsonResponse({
+        billingScopeVersion: 2,
+        workspaceId: 'ws_partial',
+        workspaceMemberId: 'member_9',
+        balanceUsd: '1.5000',
+      })
+    }
+    if (text.includes('/billing/summary')) {
+      return jsonResponse({ membershipTier: 'go', subscriptionStatus: 'active' })
+    }
+    return jsonResponse({ error: 'unauthenticated' }, 401)
+  })
+
+  const tested = await bridge(captured, { action: 'providerTest', providerId: 'open-design' })
+  assert.equal(tested.body.ok, true, 'a rejected quota route is not a failed read')
+  assert.equal(tested.body.snapshot.windows, null, 'no window is fabricated')
+  assert.equal(tested.body.snapshot.balance.amount, 1.5)
+  assert.equal(tested.body.snapshot.balance.currency, 'USD')
+  assert.equal(tested.body.snapshot.plan.label, 'GO')
+})
+
+test('OpenDesign tolerates a missing billing summary', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'tokenlens-od-nosummary-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const { captured } = harness(t, {
+    credentials: { resolve: async () => ({ value: 'vela_ctrl_test', source: 'config' }) },
+    config: {
+      minRefreshIntervalMs: 0,
+      pollIntervalMs: 0,
+      providerStoreFile: join(dir, 'providers.json'),
+      providers: { 'open-design': { enabled: true, workspaceId: 'ws_nosum', controlKeyRef: 'OPENDESIGN_CONTROL_KEY' } },
+    },
+  })
+  stubFetch(t, (call, url) => {
+    const text = String(url)
+    if (text.includes('/wallet/balance')) {
+      return jsonResponse({
+        billingScopeVersion: 2,
+        workspaceId: 'ws_nosum',
+        workspaceMemberId: 'member_9',
+        balanceUsd: '0',
+      })
+    }
+    if (text.includes('/billing/summary')) return jsonResponse({ error: 'internal' }, 500)
+    return jsonResponse({ error: 'unauthenticated' }, 401)
+  })
+
+  const tested = await bridge(captured, { action: 'providerTest', providerId: 'open-design' })
+  assert.equal(tested.body.ok, true)
+  assert.equal(tested.body.snapshot.balance.amount, 0, 'a real zero balance is kept')
+  assert.equal(tested.body.snapshot.plan, null, 'no tier is invented without a summary')
 })
 
 test('OpenDesign without a workspace id fails with missing-key, never a fabricated window', async (t) => {
@@ -800,13 +889,23 @@ test('the management page can set and clear an Open Design workspace id (v1.3.5)
       providers: { 'open-design': { enabled: true, workspaceId: '', controlKeyRef: 'OPENDESIGN_CONTROL_KEY' } },
     },
   })
-  const calls = stubFetch(t, (call, url) =>
-    String(url).includes('/wallet/balance')
-      ? jsonResponse({ billingScopeVersion: 2, workspaceId: 'ws_new', workspaceMemberId: 'member_1', balanceUsd: '1.00' })
-      : jsonResponse({
+  const calls = stubFetch(t, (call, url) => {
+    const text = String(url)
+    if (text.includes('/wallet/balance')) {
+      return jsonResponse({ billingScopeVersion: 2, workspaceId: 'ws_new', workspaceMemberId: 'member_1', balanceUsd: '1.00' })
+    }
+    if (text.includes('/billing/summary')) return jsonResponse({ membershipTier: 'go' })
+    if (text.includes('/billing/funding-check')) {
+      return jsonResponse({
+        schemaVersion: 1,
+        workspaceId: 'ws_new',
+        workspaceMemberId: 'member_1',
+        funding: 'coding_plan',
+        codingPlan: {
           workspaceId: 'ws_new',
           workspaceMemberId: 'member_1',
           eligible: true,
+          tier: 'go',
           windows: [
             {
               policyId: 'plan-7d',
@@ -817,8 +916,11 @@ test('the management page can set and clear an Open Design workspace id (v1.3.5)
               resetsAt: '2026-11-01T00:00:00.000Z',
             },
           ],
-        }),
-  )
+        },
+      })
+    }
+    return jsonResponse({ error: 'unauthenticated' }, 401)
+  })
 
   // Only the workspace-scoped adapter advertises the field.
   const list = await bridge(captured, { action: 'providers' })
@@ -843,7 +945,10 @@ test('the management page can set and clear an Open Design workspace id (v1.3.5)
   const tested = await bridge(captured, { action: 'providerTest', providerId: 'open-design' })
   assert.equal(tested.body.ok, true)
   assert.equal(tested.body.snapshot.provider.id, 'open-design')
-  assert.match(String(calls[0].url), /\/workspaces\/ws_new\/billing\/coding-plan-usage$/)
+  assert.ok(
+    calls.some((call) => /\/workspaces\/ws_new\/billing\/funding-check$/.test(String(call.url))),
+    'the quota read now targets the saved workspace',
+  )
 
   // A malformed id is refused before it can reach a URL path.
   const refused = await bridge(captured, {

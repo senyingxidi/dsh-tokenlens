@@ -124,6 +124,20 @@ returns it, only `hasKey`/`keySource`). The environment/credential sources
 (`OPENDESIGN_CONTROL_KEY`, `VELA_CONTROL_KEY`, `OPENDESIGN_WORKSPACE_ID`) still
 work and the page override wins.
 
+Reads, in independent layers (v1.4.0) — each may fail without voiding the others:
+
+| read | path | provides |
+|---|---|---|
+| wallet | `GET /api/v1/workspaces/{id}/wallet/balance` | `balance` (USD, authoritative) |
+| plan windows | `GET /api/v1/workspaces/{id}/billing/funding-check` | `windows` from its nested `codingPlan` (`eligible`, `tier`, 5h/7d credit windows) |
+| plan tier | `GET /api/v1/billing/summary` | `plan` from `membershipTier` (`go` → `GO`) |
+
+`billing/coding-plan-usage` carries the same plan document at the top level but is
+served by the console's **cookie-authenticated** route: a Control Key always gets
+HTTP 401 there (the console UI itself authenticates with a session cookie), so it
+is only a fallback. The wallet is therefore always read first; the plan endpoint
+must not turn a readable balance into a hard error.
+
 Rules:
 
 - `percent` is clamped to `0..100`; an unknown percentage is `null` (render "—"), never a fake 0.
