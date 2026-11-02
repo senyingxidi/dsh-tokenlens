@@ -7,6 +7,11 @@
 // `npm publish`, and safe to run locally. Exits 0 without changes when the
 // version is already listed.
 //
+// The version list is kept short for the market UI: only the newest
+// MARKET_INDEX_KEEP entries (default 5) stay listed; older releases remain
+// installable from npm, they just no longer appear in the market's version
+// dropdown. (2026-11-02: trimmed 13 entries down to the newest 5.)
+//
 // npm can take a few minutes to make a fresh release visible. When the registry
 // still does not report it after MARKET_INDEX_ATTEMPTS tries, PUBLISH_TIMESTAMP
 // (Unix seconds, supplied by the release workflow as `date +%s`) is used instead;
@@ -21,6 +26,8 @@ const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
 const ATTEMPTS = Number(process.env.MARKET_INDEX_ATTEMPTS ?? 12)
 const DELAY_MS = Number(process.env.MARKET_INDEX_DELAY_MS ?? 5000)
 const FALLBACK_TIMESTAMP = Number(process.env.PUBLISH_TIMESTAMP ?? 0)
+// How many of the newest versions the market index lists (dropdown length).
+const KEEP = Number(process.env.MARKET_INDEX_KEEP ?? 5)
 
 const raw = String(process.argv[2] ?? '').trim()
 const version = raw.replace(/^v/, '')
@@ -38,8 +45,28 @@ if (plugin === undefined) {
   process.exit(1)
 }
 plugin.versions ??= []
+
+/**
+ * Keep only the newest `KEEP` entries (their publish timestamps descending).
+ * Returns true when the list length actually changed.
+ */
+function pruneVersions(entry) {
+  if (!Number.isSafeInteger(KEEP) || KEEP <= 0) return false
+  const sorted = [...entry.versions].sort((a, b) => (b.publishTimestamp ?? 0) - (a.publishTimestamp ?? 0))
+  const kept = sorted.slice(0, KEEP)
+  const changed = kept.length !== entry.versions.length
+  entry.versions = kept
+  return changed
+}
+
+let pruned = pruneVersions(plugin)
 if (plugin.versions.some((entry) => entry.version === version)) {
-  console.log(`${PACKAGE}@${version} is already listed in market/index.json`)
+  if (pruned) {
+    writeFileSync(indexFile, JSON.stringify(index, null, 2) + '\n', 'utf8')
+    console.log(`${PACKAGE}@${version} is already listed; trimmed market/index.json to the newest ${KEEP} versions`)
+  } else {
+    console.log(`${PACKAGE}@${version} is already listed in market/index.json`)
+  }
   process.exit(0)
 }
 
@@ -100,6 +127,7 @@ if (typeof dshRange !== 'string' || dshRange === '') {
 if (typeof dshRange === 'string' && dshRange !== '') entry.engines = { dsh: dshRange }
 plugin.versions.push(entry)
 plugin.versions.sort((a, b) => (b.publishTimestamp ?? 0) - (a.publishTimestamp ?? 0))
+pruneVersions(plugin)
 
 writeFileSync(indexFile, JSON.stringify(index, null, 2) + '\n', 'utf8')
-console.log(`added ${PACKAGE}@${version} (published ${publishedAt}) to market/index.json`)
+console.log(`added ${PACKAGE}@${version} (published ${publishedAt}) to market/index.json (keeping the newest ${KEEP} versions)`)
