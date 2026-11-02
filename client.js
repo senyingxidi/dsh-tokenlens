@@ -993,6 +993,10 @@ window.__ModuleLoader__.load({
         status: typeof raw.status === 'string' && raw.status !== '' ? raw.status : 'unknown',
         resetsAt: typeof raw.resetsAt === 'string' ? raw.resetsAt : null,
         remainingMs: Number.isFinite(raw.remainingMs) ? raw.remainingMs : null,
+        // v1.5.2: the window instance's own start (an anchored Design Plan window
+        // does not begin "N hours ago"), so the local token slice is aligned with
+        // the allowance the percentage describes.
+        startedAt: typeof raw.startedAt === 'string' ? raw.startedAt : null,
         // Provider-native capacity (e.g. Command Code USD): shown only when all
         // three fields are usable, so an unsized window never renders "$undefined".
         used: numberOrNull(raw.used),
@@ -1680,7 +1684,72 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * The `{short, full}` labels of a provider (v0.10.0).
+     * Local tokens spent inside one allowance window (v1.5.2).
+     *
+     * A Design Plan window is ANCHORED: it starts at the subscription anchor and
+     * resets every N hours, so it is not "the last N hours" (the old behaviour,
+     * which kept showing pre-reset consumption after a reset and inflated the
+     * estimated quota ~13x). The window's own `startedAt` / `resetsAt` bound the
+     * slice, folded from the per-day, per-provider hour histograms.
+     *
+     * @returns the token total, or `null` when the range cannot be resolved (an
+     *   old Host without `startedAt`, or no histogram), in which case the caller
+     *   falls back to the rolling bucket.
+     */
+    function localTokensInWindow(stats, statsRow, providerId, window) {
+      if (stats === null || statsRow === null || window === null) return null
+      const startMs = typeof window.startedAt === 'string' ? Date.parse(window.startedAt) : NaN
+      const endMs = typeof window.resetsAt === 'string' ? Date.parse(window.resetsAt) : NaN
+      if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null
+      const daily = stats.daily
+      if (!Array.isArray(daily) || daily.length === 0) return null
+      let total = null
+      for (const entry of daily) {
+        // A day bucket only contributes whole hours through `hours`; resolve the
+        // day's local midnight, then walk its 24 slots.
+        const dayStartMs = localDayStartMs(entry.day)
+        if (!Number.isFinite(dayStartMs)) continue
+        const providerHours = entry.providers?.[providerId]?.hours ?? null
+        const hours = Array.isArray(providerHours) ? providerHours : null
+        if (hours === null) continue
+        for (let slot = 0; slot < hours.length && slot < 24; slot += 1) {
+          const hourStart = dayStartMs + slot * 3600000
+          const hourEnd = hourStart + 3600000
+          // An hour counts only when the whole slot lies inside the window; a
+          // window boundary mid-hour would otherwise need a proportional guess.
+          if (hourStart < startMs || hourEnd > endMs) continue
+          total = (total ?? 0) + (Number.isFinite(hours[slot]) ? hours[slot] : 0)
+        }
+      }
+      return total
+    }
+
+    /** Local midnight (epoch ms) of a `YYYY-MM-DD` day key, or NaN. */
+    function localDayStartMs(day) {
+      if (typeof day !== 'string') return Number.NaN
+      const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day)
+      if (match === null) return Number.NaN
+      const ms = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])).getTime()
+      return Number.isFinite(ms) ? ms : Number.NaN
+    }
+
+    /**
+     * The local tokens consumed inside one allowance window.
+     *
+     * Prefers the window-anchored slice; falls back to the rolling provider
+     * bucket only when the window bounds are unavailable (an older Host).
+     */
+    function windowLocalUsed(stats, statsRow, providerId, window) {
+      const anchored = localTokensInWindow(stats, statsRow, providerId, window)
+      if (anchored !== null) return anchored
+      const id = window?.id ?? ''
+      if (id === 'rolling') return statsRow?.fiveHours?.total ?? 0
+      if (id === 'weekly') return statsRow?.last7Days?.total ?? 0
+      if (id === 'monthly') return statsRow?.last30Days?.total ?? 0
+      return 0
+    }
+
+    /** The `{short, full}` labels of a provider (v0.10.0).
      *
      * Wire labels cached from the providers payload win, then the local catalog,
      * then the snapshot / raw id. Both fields are always usable strings, so the
@@ -3829,7 +3898,7 @@ window.__ModuleLoader__.load({
     }
 
     /** One allowance-window row: label + percent, bar, reset countdown, status. */
-    function buildWindowRow(id, window, state, now, t, statsRow = null) {
+    function buildWindowRow(id, window, state, now, t, statsRow = null, stats = null, snapshotProviderId = '') {
       const label = rowLabel(id, t)
       const level = window === null ? 'unknown' : levelOf(window.percent, window.status)
       const percentText = formatPercent(window?.percent ?? null, t)
@@ -3838,14 +3907,10 @@ window.__ModuleLoader__.load({
       // v0.30.13: local-token consumption + estimated consumable quota. The used
       // number comes from the selected provider's local stats buckets; the quota
       // is only an estimate derived from the provider-reported percentage.
-      const localUsed =
-        id === 'rolling'
-          ? statsRow?.fiveHours?.total ?? 0
-          : id === 'weekly'
-            ? statsRow?.last7Days?.total ?? 0
-            : id === 'monthly'
-              ? statsRow?.last30Days?.total ?? 0
-              : 0
+      // v1.5.2: slice from the window's OWN bounds, so a reset window starts from
+      // zero instead of replaying the previous window's consumption.
+      const providerId = statsRow?.providerId ?? snapshotProviderId ?? ''
+      const localUsed = windowLocalUsed(stats, statsRow, providerId, window)
       const percent = window !== null && Number.isFinite(window.percent) ? window.percent : null
       const quota = percent !== null && percent > 0 && localUsed > 0 ? localUsed / (percent / 100) : null
       // v0.30.13 follow-up: the estimate is INLINE on the existing reset line
@@ -5372,7 +5437,9 @@ window.__ModuleLoader__.load({
           const balanceRow = buildCapacityBalanceRow(snapshot.balance, t)
           const designPlanRow = buildDesignPlanRow(snapshot.designPlan, t)
           if (snapshot.windows !== null) {
-            const rows = WINDOW_ORDER.map((id) => buildWindowRow(id, snapshot.windows[id], state, now, t, statsRow))
+            const rows = WINDOW_ORDER.map((id) =>
+              buildWindowRow(id, snapshot.windows[id], state, now, t, statsRow, stats, snapshot.provider.id),
+            )
             if (balanceRow !== null) rows.push(balanceRow)
             if (designPlanRow !== null) rows.push(designPlanRow)
             section.push(h('div', { key: 'rows', className: 'dsh-tokenlens-rows' }, rows))

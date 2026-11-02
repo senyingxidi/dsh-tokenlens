@@ -1318,6 +1318,73 @@ test('a partial period estimate stays out of the monthly slot', async (t) => {
   assert.ok(tested.body.snapshot.windows.monthly.percent > 0)
 })
 
+test('open-design windows expose their anchored start so the client can slice local tokens (v1.5.2)', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'tokenlens-od-anchor-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const windowStart = '2026-11-02T09:53:18.000Z'
+  const { captured } = harness(t, {
+    credentials: { resolve: async () => ({ value: 'vela_ctrl_test', source: 'config' }) },
+    config: {
+      minRefreshIntervalMs: 0,
+      pollIntervalMs: 0,
+      providerStoreFile: join(dir, 'providers.json'),
+      designPlanLedgerFile: join(dir, 'design-plan-ledger.json'),
+      providers: { 'open-design': { enabled: true, workspaceId: 'ws_a', controlKeyRef: 'OPENDESIGN_CONTROL_KEY' } },
+    },
+  })
+  stubFetch(t, (call, url) => {
+    const text = String(url)
+    if (text.includes('/wallet/balance')) {
+      return jsonResponse({ billingScopeVersion: 2, workspaceId: 'ws_a', workspaceMemberId: 'm', balanceUsd: '1.00' })
+    }
+    if (text.includes('/billing/summary')) {
+      return jsonResponse({
+        membershipTier: 'go',
+        creditsPerUsd: 10000,
+        subscriptionCurrentPeriodStart: '2026-11-02T09:53:18.000Z',
+        subscriptionCurrentPeriodEnd: '2026-12-02T09:53:18.000Z',
+      })
+    }
+    return jsonResponse({
+      schemaVersion: 1,
+      workspaceId: 'ws_a',
+      workspaceMemberId: 'm',
+      codingPlan: {
+        workspaceId: 'ws_a',
+        eligible: true,
+        windows: [
+          {
+            policyId: 'p5h',
+            durationSeconds: 18000,
+            usedCredits: '1000',
+            limitCredits: '50000',
+            remainingCredits: '49000',
+            windowStart,
+            resetsAt: '2026-11-02T14:53:18.000Z',
+          },
+          {
+            policyId: 'p7d',
+            durationSeconds: 604800,
+            usedCredits: '5000',
+            limitCredits: '150000',
+            remainingCredits: '145000',
+            windowStart,
+            resetsAt: '2026-11-09T09:53:18.000Z',
+          },
+        ],
+      },
+    })
+  })
+
+  const tested = await bridge(captured, { action: 'providerTest', providerId: 'open-design' })
+  const { rolling, weekly } = tested.body.snapshot.windows
+  // The client needs this to sum exactly the tokens spent inside the window; a
+  // plain trailing bucket is a different interval and produced the stale numbers.
+  assert.equal(rolling.startedAt, windowStart, 'the 5h window reports its own start')
+  assert.equal(weekly.startedAt, windowStart, 'the 7d window reports its own start')
+  assert.equal(rolling.resetsAt, '2026-11-02T14:53:18.000Z')
+})
+
 test('unknown actions are refused with the legal list', async (t) => {
   const { captured } = harness(t, { credentials: okCredentials, config: { pollIntervalMs: 0 } })
   stubFetch(t, () => jsonResponse(LIVE_PAYLOAD))

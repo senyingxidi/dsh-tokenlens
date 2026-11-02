@@ -78,6 +78,7 @@ from `dsh-app://app/` and forwards non-asset paths to the Host).
   "windows": {                               // canonical ids, display order
     "rolling": { "id": "rolling", "percent": 8, "status": "ok",
                  "resetsAt": "2026-10-25T11:31:25.000Z", "remainingMs": 123456,
+                 "startedAt": "2026-10-25T06:31:25.000Z",   // v1.5.2, when reported
                  "used": 0.5, "cap": 2.5, "unit": "USD" } | null,
     "weekly":  { … } | null,
     "monthly": { … } | null
@@ -200,6 +201,13 @@ Rules:
 - The model picker emits `deepseek-official` / `deepseek-account`, never a bare
   `deepseek`: the Host aliases `deepseek-official` onto the `deepseek` adapter.
   A provider without an adapter answers `unsupported-provider`.
+- **`startedAt` (v1.5.2) is the window instance's own start**, not "now minus the
+  window length". Design Plan windows are anchored to the subscription time
+  (`resetMode: "anchored_recurring"`), so a window can begin at 09:53 and reset at
+  14:53 regardless of the current clock. A client that wants to describe a window
+  in local tokens MUST sum the interval `[startedAt, resetsAt)`; using a trailing
+  "last N hours" slice mixes in the previous window and keeps reporting consumed
+  tokens after a reset. Omitted when the upstream reports no `windowStart`.
 - **Plan capacity vs local usage (v3 split):** the snapshot above is the
   server-side **plan capacity** (provider-native units). `used` / `cap` / `unit`
   appear only for providers that report their allowance in a native unit

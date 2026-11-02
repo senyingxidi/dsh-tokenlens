@@ -7078,6 +7078,118 @@ function capacityStatsFixture() {
   }
 }
 
+/**
+ * A stats fixture whose open-design hour histograms are known, so the window
+ * slicing can be asserted exactly. `hours` maps a local day -> 24 token slots.
+ */
+function anchoredWindowStats(providerId, day, hours, bucketTotals = {}) {
+  const base = statsFixture()
+  const provider = base.providers.find((row) => row.providerId === providerId) ?? base.providers[0]
+  return {
+    ...base,
+    providers: [
+      {
+        ...provider,
+        providerId,
+        fiveHours: bucket({ total: bucketTotals.fiveHours ?? 999_999 }),
+        last7Days: bucket({ total: bucketTotals.last7Days ?? 888_888 }),
+        last30Days: bucket({ total: bucketTotals.last30Days ?? 777_777 }),
+      },
+      ...base.providers.filter((row) => row.providerId !== providerId),
+    ],
+    daily: [{ day, total: { total: hours.reduce((sum, n) => sum + n, 0), messages: hours.length }, providers: { [providerId]: { total: hours.reduce((sum, n) => sum + n, 0), messages: hours.length, hours } } }],
+  }
+}
+
+test('a reset open-design window stops reporting the previous window consumption (v1.5.2)', async () => {
+  // Regression: the dialog sliced "the last 5 hours" / "the last 7 days" from the
+  // local counters instead of the Design Plan window's own bounds. After a reset
+  // the OLD consumption was still summed, so 已消耗 stayed high and the
+  // estimated quota jumped (measured: 96.4% -> 7.3% made it 766M -> 10.1B).
+  const day = '2026-11-02'
+  // Local hour slots 13..17 belong to the OLD window; 20..21 to the NEW one.
+  const hours = new Array(24).fill(0)
+  hours[13] = 100_000
+  hours[14] = 200_000
+  hours[20] = 7_000
+  hours[21] = 3_000
+  // The reset window starts at 20:00 local and ends 25:00 (01:00 next day).
+  const startedAt = new Date(2026, 10, 2, 20, 0, 0).toISOString()
+  const resetsAt = new Date(2026, 10, 3, 1, 0, 0).toISOString()
+  const snapshot = snapshotFixture('open-design')
+  snapshot.windows = {
+    rolling: {
+      ...windowFixture(7.3, 4.5),
+      startedAt,
+      resetsAt,
+      remainingMs: Date.parse(resetsAt) - Date.now(),
+    },
+    weekly: windowFixture(35, 48),
+    monthly: null,
+  }
+
+  const plugin = loadPlugin((payload) => {
+    if (payload.action === 'hello') return { ok: true }
+    if (payload.action === 'providers') return providersFixture()
+    if (payload.action === 'stats') return { ok: true, stats: anchoredWindowStats('open-design', day, hours) }
+    return { ok: true, snapshot }
+  })
+  try {
+    const tree = await settleDialog(plugin, 'open-design')
+    const segment = capacityTokensOf(tree, 'rolling')
+    assert.ok(segment, 'the rolling row renders the local-token segment')
+    // 7_000 + 3_000 = 10_000 tokens inside the new window; the 300_000 from the
+    // previous window must NOT be counted.
+    assert.equal(
+      capacityTokensTextOf(segment),
+      ' · 已消耗 10.000K · 预计可消耗 136.986K',
+      `stale consumption leaked into the reset window: ${capacityTokensTextOf(segment)}`,
+    )
+  } finally {
+    plugin.dispose()
+  }
+})
+
+test('a weekly window that resets mid-period also re-slices from its own start (v1.5.2)', async () => {
+  // Same family of bug: the weekly row used `last7Days`, which is a trailing
+  // calendar slice, not the anchored 7-day window.
+  const monday = '2026-11-02'
+  const hours = new Array(24).fill(0)
+  hours[0] = 50_000
+  hours[23] = 5_000
+  const snapshot = snapshotFixture('open-design')
+  snapshot.windows = {
+    rolling: windowFixture(7, 4.5),
+    // The window starts at 06:00 local, so only slots 6..22 are inside it.
+    weekly: {
+      ...windowFixture(20, 48),
+      startedAt: new Date(2026, 10, 2, 6, 0, 0).toISOString(),
+      resetsAt: new Date(2026, 10, 9, 6, 0, 0).toISOString(),
+    },
+    monthly: null,
+  }
+  const plugin = loadPlugin((payload) => {
+    if (payload.action === 'hello') return { ok: true }
+    if (payload.action === 'providers') return providersFixture()
+    if (payload.action === 'stats') return { ok: true, stats: anchoredWindowStats('open-design', monday, hours) }
+    return { ok: true, snapshot }
+  })
+  try {
+    const tree = await settleDialog(plugin, 'open-design')
+    const segment = capacityTokensOf(tree, 'weekly')
+    // The 00:00 slot (50_000) is OUTSIDE the 06:00-anchored window, while 23:00
+    // (5_000) is inside it. The trailing `last7Days` bucket is 888_888, so seeing
+    // exactly 5.000K proves the anchor slice was used, not the calendar bucket.
+    assert.equal(
+      capacityTokensTextOf(segment),
+      ' · 已消耗 5.000K · 预计可消耗 25.000K',
+      `the weekly row still used the trailing bucket: ${capacityTokensTextOf(segment)}`,
+    )
+  } finally {
+    plugin.dispose()
+  }
+})
+
 test('capacity card shows local consumption and estimated quota per window (data + chart)', async () => {
   const plugin = loadPlugin((payload) => {
     if (payload.action === 'hello') return { ok: true }
