@@ -231,8 +231,11 @@ Control Key 是 **Open Design 桌面端/CLI 登录时写入本机的会话凭据
 
 拿到后两种放法：
 
-- 写进 `$DSH_HOME/.credentials.yaml` 的 `refs:` 下：`OPENDESIGN_CONTROL_KEY: <control key>`（或环境变量 `OPENDESIGN_CONTROL_KEY` / `VELA_CONTROL_KEY`）；
-- workspace ID 在插件的[供应商管理页](#供应商管理) Open Design 卡片里填写，或用 `OPENDESIGN_WORKSPACE_ID` 环境变量。
+- **最简单（推荐给不折腾的用户）**：全部在插件里填——用量弹窗 →「管理」→「供应商配置」→ 展开 **Open Design**：
+  - 「工作区 ID」：直接粘贴控制台地址整条也行（`...?workspaceId=xxx` 会自动提取出 ID）；
+  - 「Control Key」：粘贴后保存，输入框是密码型、保存后不再显示（Host 只回 `hasKey`，secret 永不下发浏览器）。
+  保存后点「测试连接」，出现 5 小时 / 7 天百分比与钱包余额即成功。
+- **或写配置文件**：Control Key 写进 `$DSH_HOME/.credentials.yaml` 的 `refs:` 下 `OPENDESIGN_CONTROL_KEY: <control key>`（或环境变量 `OPENDESIGN_CONTROL_KEY` / `VELA_CONTROL_KEY`）；workspace ID 用 `OPENDESIGN_WORKSPACE_ID` 环境变量或 profile 配置。
 
 > 这也解释了最容易踩的坑：**用推理 Key 填 Control Key** 会让额度查询返回 401。插件已经区分这两种凭据，缺哪一项都会指名道姓地提示。
 

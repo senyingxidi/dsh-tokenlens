@@ -2491,16 +2491,119 @@ test('the Open Design editor renders a workspace-ID field and saves only the cha
 
     tree = expandProvider(plugin, tree, 'open-design')
     providerInputOf(tree, 'data-provider-workspaceid', 'open-design').props.onChange({
-      target: { value: 'ws_typed' },
+      target: { value: 'https://open-design.ai/cloud/dashboard?workspaceId=ws_pasted&tab=billing' },
     })
     tree = renderDialog(plugin)
-    assert.equal(providerInputOf(tree, 'data-provider-workspaceid', 'open-design').props.value, 'ws_typed')
+    assert.equal(
+      providerInputOf(tree, 'data-provider-workspaceid', 'open-design').props.value,
+      'ws_pasted',
+      'a pasted console URL is reduced to its workspace id (v1.3.9)',
+    )
     editorButtonOf(tree, 'dsh-tokenlens-save').props.onClick()
     await settle()
 
     assert.equal(updates.length, 1, 'one update is sent')
     assert.equal(updates[0].providerId, 'open-design')
-    assert.deepEqual(updates[0].update, { workspaceId: 'ws_typed' }, 'only the changed workspace id is sent')
+    assert.deepEqual(updates[0].update, { workspaceId: 'ws_pasted' }, 'the extracted workspace id is sent')
+  } finally {
+    plugin.dispose()
+  }
+})
+
+test('a pasted console URL with only a workspace id keeps it verbatim', async () => {
+  const updates = []
+  const plugin = loadPlugin((payload) => {
+    if (payload.action === 'hello') return { ok: true }
+    if (payload.action === 'stats') return { ok: true, stats: statsFixture() }
+    if (payload.action === 'providers') return providersFixtureWithWorkspace()
+    if (payload.action === 'providerUpdate') {
+      updates.push(payload)
+      return providersFixtureWithWorkspace({ workspaceId: payload.update?.workspaceId })
+    }
+    return { ok: true, snapshot: snapshotFixture(payload.providerId) }
+  })
+  try {
+    let tree = await settleManagementAll(plugin)
+    tree = expandPresetSection(plugin, tree)
+    tree = expandProvider(plugin, tree, 'open-design')
+    providerInputOf(tree, 'data-provider-workspaceid', 'open-design').props.onChange({
+      target: { value: '  ws_plain  ' },
+    })
+    tree = renderDialog(plugin)
+    assert.equal(providerInputOf(tree, 'data-provider-workspaceid', 'open-design').props.value, 'ws_plain')
+  } finally {
+    plugin.dispose()
+  }
+})
+
+test('the Open Design editor offers a write-only Control Key input (v1.3.9)', async () => {
+  const updates = []
+  let hasKey = false
+  const payload = () => {
+    const base = providersFixtureWithWorkspace()
+    base.providers = base.providers.map((entry) =>
+      entry.providerId === 'open-design' ? { ...entry, hasKey } : entry,
+    )
+    return base
+  }
+  const plugin = loadPlugin((call) => {
+    if (call.action === 'hello') return { ok: true }
+    if (call.action === 'stats') return { ok: true, stats: statsFixture() }
+    if (call.action === 'providers') return payload()
+    if (call.action === 'providerUpdate') {
+      updates.push(call)
+      if (typeof call.update?.apiKey === 'string' && call.update.apiKey !== '') hasKey = true
+      return payload()
+    }
+    return { ok: true, snapshot: snapshotFixture(call.providerId) }
+  })
+  try {
+    let tree = await settleManagementAll(plugin)
+    tree = expandPresetSection(plugin, tree)
+    tree = expandProvider(plugin, tree, 'open-design')
+    const input = providerInputOf(tree, 'data-provider-controlkey', 'open-design')
+    assert.ok(input, 'the Control Key input is rendered')
+    assert.equal(input.props.type, 'password', 'the key is masked')
+    assert.equal(input.props.value, '', 'the Host never echoes a stored secret back')
+    assert.match(String(input.props.placeholder), /粘贴 Control Key/, 'an unsaved key invites a paste')
+
+    // No other provider gets a credential input: v0.14.0's rule still holds.
+    tree = expandProvider(plugin, tree, 'opencode-go')
+    assert.equal(
+      providerInputOf(tree, 'data-provider-controlkey', 'opencode-go'),
+      undefined,
+      'only the workspace-scoped adapter accepts a secret here',
+    )
+
+    tree = expandProvider(plugin, tree, 'open-design')
+    providerInputOf(tree, 'data-provider-controlkey', 'open-design').props.onChange({
+      target: { value: '  od_control_typed  ' },
+    })
+    tree = renderDialog(plugin)
+    assert.equal(
+      providerInputOf(tree, 'data-provider-controlkey', 'open-design').props.value,
+      '  od_control_typed  ',
+      'the typed secret stays in the masked input',
+    )
+    const saveButton = editorButtonOf(tree, 'dsh-tokenlens-save')
+    assert.equal(saveButton.props.disabled, false, 'a typed secret enables the save button')
+    saveButton.props.onClick()
+    await settle()
+
+    assert.equal(updates.length, 1, 'one update is sent')
+    assert.deepEqual(updates[0].update, { apiKey: 'od_control_typed' }, 'the trimmed key is sent exactly once')
+    assert.equal(updates[0].providerId, 'open-design')
+
+    // After the Host confirms, the draft is dropped and the placeholder reports it.
+    tree = renderDialog(plugin)
+    const settled = providerInputOf(tree, 'data-provider-controlkey', 'open-design')
+    assert.equal(settled.props.value, '', 'the typed secret does not linger in the input')
+    assert.match(String(settled.props.placeholder), /已保存/, 'the placeholder says a key is stored')
+
+    // An untouched field never sends an empty apiKey (which would clear nothing).
+    editorButtonOf(tree, 'dsh-tokenlens-save').props.onClick()
+    await settle()
+    assert.equal(updates.length, 1, 'no redundant update is sent without a typed secret')
   } finally {
     plugin.dispose()
   }

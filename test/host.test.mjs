@@ -866,6 +866,70 @@ test('the management page can set and clear an Open Design workspace id (v1.3.5)
   assert.equal(JSON.parse(await readFile(storeFile, 'utf8')).providers['open-design'], undefined, 'an empty override is dropped')
 })
 
+test('a Control Key saved from the management page is used as the Open Design credential (v1.3.9)', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'tokenlens-od-key-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const storeFile = join(dir, 'providers.json')
+  // No credential service, no env var: the management-page override is the only
+  // possible source, which is exactly the "beginner user" path.
+  const { captured } = harness(t, {
+    config: {
+      minRefreshIntervalMs: 0,
+      pollIntervalMs: 0,
+      providerStoreFile: storeFile,
+      providers: { 'open-design': { enabled: true, workspaceId: 'ws_key', controlKeyRef: 'OPENDESIGN_CONTROL_KEY' } },
+    },
+  })
+  const calls = stubFetch(t, (call, url) =>
+    String(url).includes('/wallet/balance')
+      ? jsonResponse({ billingScopeVersion: 2, workspaceId: 'ws_key', workspaceMemberId: 'member_1', balanceUsd: '2.00' })
+      : jsonResponse({
+          workspaceId: 'ws_key',
+          workspaceMemberId: 'member_1',
+          eligible: true,
+          windows: [
+            {
+              policyId: 'plan-5h',
+              durationSeconds: 18000,
+              usedCredits: '500',
+              remainingCredits: '500',
+              limitCredits: '1000',
+              resetsAt: '2026-11-02T18:00:00.000Z',
+            },
+          ],
+        }),
+  )
+
+  // Before saving, the read fails for the missing Control Key.
+  const before = await bridge(captured, { action: 'providerTest', providerId: 'open-design' })
+  assert.equal(before.body.ok, false)
+  assert.equal(before.body.error.code, 'missing-key')
+
+  const saved = await bridge(captured, {
+    action: 'providerUpdate',
+    providerId: 'open-design',
+    update: { apiKey: '  od_control_from_ui  ' },
+  })
+  assert.equal(saved.body.ok, true)
+  const row = saved.body.providers.find((provider) => provider.providerId === 'open-design')
+  assert.equal(row.hasKey, true, 'the management page now reports a stored credential')
+  assert.equal(row.keySource, 'config', 'the key comes from the plugin store, not the environment')
+  assert.equal(
+    JSON.parse(await readFile(storeFile, 'utf8')).providers['open-design'].apiKey,
+    'od_control_from_ui',
+    'the trimmed key is persisted in the plugin-owned store',
+  )
+  // The payload must never echo the secret back.
+  assert.equal(JSON.stringify(saved.body).includes('od_control_from_ui'), false, 'no secret crosses the wire')
+
+  const after = await bridge(captured, { action: 'providerTest', providerId: 'open-design' })
+  assert.equal(after.body.ok, true)
+  assert.equal(after.body.snapshot.windows.rolling.percent, 50)
+  const quotaCall = calls[calls.length - 2]
+  assert.equal(quotaCall.init.headers.authorization, 'Bearer od_control_from_ui')
+  assert.equal(quotaCall.init.headers['x-vela-workspace-id'], 'ws_key')
+})
+
 test('unknown actions are refused with the legal list', async (t) => {
   const { captured } = harness(t, { credentials: okCredentials, config: { pollIntervalMs: 0 } })
   stubFetch(t, () => jsonResponse(LIVE_PAYLOAD))

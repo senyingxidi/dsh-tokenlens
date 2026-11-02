@@ -116,10 +116,13 @@ row at the end of the capacity card and appends the amount to the chip tooltip.
 **workspace id** (the console URL's `?workspaceId=` value) and a **Control Key**
 (the `profiles.prod.controlKey` the desktop app / `vela login` writes to
 `~/.amr/config.json`). The inference key from the Cloud API Keys page answers
-HTTP 401 on the billing endpoints. Missing either value is a `missing-key` error;
-the workspace id may be set from the management page (persisted in
-`providers.json`, v1.3.5) and the Control Key comes from `OPENDESIGN_CONTROL_KEY`,
-`VELA_CONTROL_KEY`, the credential store, or that page's key field.
+HTTP 401 on the billing endpoints. Missing either value is a `missing-key` error.
+Since v1.3.9 both may be entered on the management page: `workspaceId` is
+persisted in `providers.json`, and the Control Key is written through the same
+`apiKey` override field the store already supported (write-only — the Host never
+returns it, only `hasKey`/`keySource`). The environment/credential sources
+(`OPENDESIGN_CONTROL_KEY`, `VELA_CONTROL_KEY`, `OPENDESIGN_WORKSPACE_ID`) still
+work and the page override wins.
 
 Rules:
 

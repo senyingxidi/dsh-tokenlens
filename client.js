@@ -331,8 +331,12 @@ window.__ModuleLoader__.load({
       providerConsoleURLPlaceholder: '留空则使用内置默认地址',
       providerWorkspaceId: '工作区 ID（Workspace ID）',
       providerWorkspaceIdHint: 'Open Design Cloud 工作区标识；额度查询需要',
-      providerWorkspaceIdPlaceholder: '留空则使用环境变量 OPENDESIGN_WORKSPACE_ID',
+      providerWorkspaceIdPlaceholder: '粘贴工作区 ID，或直接粘贴控制台地址（自动提取）',
       providerWorkspaceIdTooLong: '工作区 ID 最多 120 个字符',
+      providerControlKey: 'Control Key',
+      providerControlKeyHint: '本机 Open Design 登录后写在 ~/.amr/config.json 的 profiles.prod.controlKey；不是 Cloud API Keys 页的推理 Key',
+      providerControlKeyPlaceholder: '粘贴 Control Key（保存后不再显示）',
+      providerControlKeySaved: '已保存；要替换请重新粘贴',
       configureProvider: '去配置',
       errorOpenDesignConfig: 'Open Design 额度查询需要工作区 ID 与 Control Key（不是推理 Key）',
       providerSave: '保存',
@@ -582,8 +586,12 @@ window.__ModuleLoader__.load({
       providerConsoleURL: 'Console URL',
       providerWorkspaceId: 'Workspace ID',
       providerWorkspaceIdHint: 'The Open Design Cloud workspace identifier the quota query is scoped to',
-      providerWorkspaceIdPlaceholder: 'Empty uses the OPENDESIGN_WORKSPACE_ID environment variable',
+      providerWorkspaceIdPlaceholder: 'Paste the workspace ID, or the console URL (it is extracted)',
       providerWorkspaceIdTooLong: 'The workspace ID may be at most 120 characters',
+      providerControlKey: 'Control Key',
+      providerControlKeyHint: 'Written to ~/.amr/config.json as profiles.prod.controlKey after signing in to Open Design; not the inference key from the Cloud API Keys page',
+      providerControlKeyPlaceholder: 'Paste the Control Key (never shown again after saving)',
+      providerControlKeySaved: 'Saved; paste again to replace it',
       configureProvider: 'Configure',
       errorOpenDesignConfig: 'Open Design quota needs a workspace ID and a Control Key (not an inference key)',
       providerConsoleURLPlaceholder: 'Leave empty for the built-in default',
@@ -2329,6 +2337,10 @@ window.__ModuleLoader__.load({
             const clearedDraft = hasField('consoleUrl')
             const resetNames = !clearedDraft && (hasField('shortLabel') || hasField('label'))
             const resetWorkspace = hasField('workspaceId')
+            // v1.3.9: a saved secret is never echoed back, so the typed value is
+            // dropped after the Host confirms it (the placeholder then reports
+            // "already saved" through the answered hasKey flag).
+            const resetSecret = hasField('apiKey')
             const rowTest = { ...current.rowTest }
             delete rowTest[providerId]
             // Adopt the answered list; a Host that omits it must not blank the page.
@@ -2336,7 +2348,7 @@ window.__ModuleLoader__.load({
             let nextDrafts = current.drafts
             if (clearedDraft) {
               nextDrafts = mapWithout(current.drafts, providerId)
-            } else if (resetNames || resetWorkspace) {
+            } else if (resetNames || resetWorkspace || resetSecret) {
               const draft = current.drafts[providerId]
               const answered = adoptsList
                 ? parsed.providers.find((entry) => entry.providerId === providerId)
@@ -2355,6 +2367,7 @@ window.__ModuleLoader__.load({
                       ? answered.workspaceId
                       : draft.workspaceId
                 }
+                if (resetSecret) next.apiKey = ''
                 nextDrafts = mapWith(current.drafts, providerId, next)
               }
             }
@@ -2843,6 +2856,9 @@ window.__ModuleLoader__.load({
         shortLabel: provider.shortLabel,
         label: provider.label,
         workspaceId: typeof provider.workspaceId === 'string' ? provider.workspaceId : '',
+        // A secret is never seeded from the wire: it starts empty and only
+        // carries what the user just typed (v1.3.9).
+        apiKey: '',
       }
     }
 
@@ -2869,6 +2885,10 @@ window.__ModuleLoader__.load({
         const wireWorkspaceId = typeof provider.workspaceId === 'string' ? provider.workspaceId : ''
         const workspaceId = typeof source.workspaceId === 'string' ? source.workspaceId.trim() : wireWorkspaceId
         if (workspaceId !== wireWorkspaceId) update.workspaceId = workspaceId
+        // v1.3.9: the Control Key is write-only. A typed value is sent once; an
+        // empty draft means "leave the stored secret alone", never "clear it".
+        const apiKey = typeof source.apiKey === 'string' ? source.apiKey.trim() : ''
+        if (apiKey !== '') update.apiKey = apiKey
       }
       return update
     }
@@ -2893,21 +2913,43 @@ window.__ModuleLoader__.load({
               shortLabel: provider.shortLabel,
               label: provider.label,
               workspaceId: typeof provider.workspaceId === 'string' ? provider.workspaceId : '',
+              apiKey: '',
             }),
       })
     }
 
-    /** Record one typed editor value (names, the display-only console URL, the workspace id). */
+    /**
+     * Accept a pasted console URL and pull the workspace id out of it (v1.3.9):
+     * beginners copy the whole address bar, so `…?workspaceId=abc&x=1` must
+     * reduce to `abc` instead of being rejected for containing slashes.
+     */
+    function extractWorkspaceId(raw) {
+      const text = typeof raw === 'string' ? raw.trim() : ''
+      if (text === '') return ''
+      const match = /[?&]workspaceId=([^&#\s]+)/i.exec(text)
+      if (match === null) return text
+      try {
+        return decodeURIComponent(match[1])
+      } catch {
+        return match[1]
+      }
+    }
+
+    /** Record one typed editor value (names, the display-only console URL, the workspace id, a typed secret). */
     function updateProviderDraft(provider, field, value) {
-      if (field !== 'consoleUrl' && field !== 'shortLabel' && field !== 'label' && field !== 'workspaceId') return
-      if (field === 'workspaceId' && provider.supportsWorkspaceId !== true) return
+      if (field !== 'consoleUrl' && field !== 'shortLabel' && field !== 'label' && field !== 'workspaceId' && field !== 'apiKey') {
+        return
+      }
+      if ((field === 'workspaceId' || field === 'apiKey') && provider.supportsWorkspaceId !== true) return
       if (provider === null || provider === undefined) return
       const current = store.get().management
       const draft = providerDraftOf(provider, current)
       patchManagement({
         drafts: mapWith(current.drafts, provider.providerId, {
           ...draft,
-          [field]: typeof value === 'string' ? value : '',
+          // v1.3.9: a pasted console URL is reduced to its workspace id as the
+          // user types, so the save never posts a URL or gets rejected.
+          [field]: field === 'workspaceId' ? extractWorkspaceId(value) : typeof value === 'string' ? value : '',
         }),
       })
     }
@@ -5944,6 +5986,43 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * One write-only credential field (v1.3.9).
+     *
+     * The Host never sends a stored secret back, so the input always starts empty
+     * and its placeholder reports whether a value is already saved. Typing a new
+     * value stages `{apiKey}` on the draft; the save button then sends it once,
+     * and a successful save clears it again (the Host keeps the secret).
+     */
+    function buildProviderSecretField(provider, management, t, options) {
+      const providerId = provider.providerId
+      const draft = providerDraftOf(provider, management)
+      const disabled = management.busy[providerId] !== undefined
+      const value = typeof draft[options.field] === 'string' ? draft[options.field] : ''
+      return h(
+        'div',
+        { key: options.key, className: 'dsh-tokenlens-field' },
+        h(
+          'div',
+          { className: 'dsh-tokenlens-field-head' },
+          h('span', { className: 'dsh-tokenlens-field-label' }, options.label),
+          h('span', { className: 'dsh-tokenlens-field-hint' }, options.hint),
+        ),
+        h('input', {
+          type: 'password',
+          className: `dsh-tokenlens-input ${options.className}`,
+          [options.dataAttr]: providerId,
+          value,
+          placeholder: options.placeholder,
+          disabled,
+          autoComplete: 'off',
+          spellCheck: false,
+          'aria-label': options.label,
+          onChange: (event) => updateProviderDraft(provider, options.field, event?.target?.value),
+        }),
+      )
+    }
+
+    /**
      * One editable name field (v0.12.0): a text input capped at the Host limit,
      * with a permanent limit hint and an inline error while the draft is longer
      * than allowed (the Host validates again and reports HTTP 500 on save).
@@ -6072,6 +6151,20 @@ window.__ModuleLoader__.load({
             : buildDshUnmanagedRow(provider, t)
       const fields = [
         sourceRow,
+        // v1.3.9: Open Design's Control Key cannot come from the DSH model
+        // settings (that route holds the inference key, which the billing API
+        // rejects), so this one provider gets a write-only credential input.
+        provider.supportsWorkspaceId === true
+          ? buildProviderSecretField(provider, management, t, {
+              key: 'apiKey',
+              className: 'dsh-tokenlens-controlkey-input',
+              dataAttr: 'data-provider-controlkey',
+              field: 'apiKey',
+              placeholder: provider.hasKey === true ? t('providerControlKeySaved') : t('providerControlKeyPlaceholder'),
+              label: t('providerControlKey'),
+              hint: t('providerControlKeyHint'),
+            })
+          : null,
         buildProviderNameField(provider, management, t, {
           key: 'shortLabel',
           className: 'dsh-tokenlens-shortlabel-input',
