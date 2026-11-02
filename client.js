@@ -339,6 +339,12 @@ window.__ModuleLoader__.load({
       providerControlKeySaved: '已保存；要替换请重新粘贴',
       configureProvider: '去配置',
       errorOpenDesignConfig: 'Open Design 额度查询需要工作区 ID 与 Control Key（不是推理 Key）',
+      designPlanLabel: '本期 Design Plan 累计',
+      designPlanHint:
+        'Open Design 没有月度用量接口，此值由插件在本机累加观测到的 7 天窗口得出，仅供参考；未观测到的窗口不会计入',
+      designPlanWindowsOf: '≈ {count} 个周额度',
+      designPlanComplete: '已覆盖本账期全部窗口',
+      designPlanPartial: '仅统计已观测的 {count} 个窗口',
       providerSave: '保存',
       providerSaving: '保存中…',
       providerTest: '测试连接',
@@ -594,6 +600,12 @@ window.__ModuleLoader__.load({
       providerControlKeySaved: 'Saved; paste again to replace it',
       configureProvider: 'Configure',
       errorOpenDesignConfig: 'Open Design quota needs a workspace ID and a Control Key (not an inference key)',
+      designPlanLabel: 'Period Design Plan (estimate)',
+      designPlanHint:
+        'Open Design serves no period-usage endpoint: this value accumulates the 7-day windows observed on this machine. Windows observed while the plugin was not running are not counted.',
+      designPlanWindowsOf: '≈ {count} weekly allowances',
+      designPlanComplete: 'covers every window of this period',
+      designPlanPartial: 'only {count} observed window(s)',
       providerConsoleURLPlaceholder: 'Leave empty for the built-in default',
       providerSave: 'Save',
       providerSaving: 'Saving…',
@@ -1059,6 +1071,32 @@ window.__ModuleLoader__.load({
       return { console: url }
     }
 
+    /**
+     * The open-design period estimate (v1.5.0), or null.
+     *
+     * Open Design serves no period-usage endpoint, so the Host accumulates the
+     * weekly windows it observes. Everything here is optional: an older Host
+     * omits the field entirely and renders no line.
+     */
+    function normalizeDesignPlan(raw) {
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null
+      const usedCredits = numberOrNull(raw.usedCredits)
+      if (usedCredits === null || usedCredits <= 0) return null
+      const windows = Number.isFinite(raw.windows) && raw.windows > 0 ? Math.round(raw.windows) : 0
+      const estimatedUsd = numberOrNull(raw.estimatedUsd)
+      const limitPerWindow = numberOrNull(raw.limitPerWindow)
+      return {
+        periodStart: stringOrEmpty(raw.periodStart),
+        periodEnd: stringOrEmpty(raw.periodEnd),
+        usedCredits,
+        estimatedUsd,
+        windows,
+        complete: raw.complete === true,
+        since: stringOrEmpty(raw.since),
+        limitPerWindow: limitPerWindow !== null && limitPerWindow > 0 ? limitPerWindow : null,
+      }
+    }
+
     /** The whole wire snapshot, or null. */
     function normalizeSnapshot(raw) {
       if (raw === null || typeof raw !== 'object') return null
@@ -1080,6 +1118,8 @@ window.__ModuleLoader__.load({
         credits: normalizeCredits(raw.credits),
         account: normalizeAccount(raw.account),
         links: normalizeLinks(raw.links),
+        // v1.5.0: open-design only; absent everywhere else.
+        designPlan: normalizeDesignPlan(raw.designPlan),
         fetchedAt: stringOrEmpty(raw.fetchedAt),
         ageMs: Number.isFinite(raw.ageMs) ? raw.ageMs : null,
         stale: raw.stale === true,
@@ -3911,6 +3951,66 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /**
+     * The open-design period estimate row (v1.5.0).
+     *
+     * Open Design has no period-usage endpoint, so this is the Host's local
+     * accumulation of the weekly windows it observed. It is labelled as an
+     * estimate and carries a coverage note: when the first observed window does
+     * not start at the billing period start, earlier windows were never seen and
+     * the value is a lower bound.
+     */
+    function buildDesignPlanRow(designPlan, t) {
+      if (designPlan === null) return null
+      const parts = []
+      if (designPlan.estimatedUsd !== null) {
+        parts.push(
+          h(
+            'span',
+            { key: 'usd', className: 'dsh-tokenlens-percent dsh-tokenlens-capacity-money' },
+            formatMoney(designPlan.estimatedUsd, 'USD'),
+          ),
+        )
+      } else {
+        parts.push(
+          h(
+            'span',
+            { key: 'credits', className: 'dsh-tokenlens-percent dsh-tokenlens-capacity-money' },
+            formatTokensPrecise(designPlan.usedCredits),
+          ),
+        )
+      }
+      const notes = []
+      if (designPlan.limitPerWindow !== null && designPlan.usedCredits > 0) {
+        const ratio = designPlan.usedCredits / designPlan.limitPerWindow
+        notes.push(t('designPlanWindowsOf', { count: ratio.toFixed(1) }))
+      }
+      if (designPlan.complete === true) notes.push(t('designPlanComplete'))
+      else if (designPlan.windows > 0) notes.push(t('designPlanPartial', { count: designPlan.windows }))
+      return h(
+        'div',
+        {
+          key: 'design-plan',
+          className: 'dsh-tokenlens-row',
+          'data-capacity-designplan': 'true',
+          title: t('designPlanHint'),
+        },
+        h(
+          'div',
+          { className: 'dsh-tokenlens-row-head' },
+          h('span', { className: 'dsh-tokenlens-row-label' }, t('designPlanLabel')),
+          parts,
+        ),
+        notes.length > 0
+          ? h(
+              'div',
+              { className: 'dsh-tokenlens-capacity-tokens', 'data-kind': designPlan.complete === true ? 'complete' : 'partial' },
+              notes.join(' · '),
+            )
+          : null,
+      )
+    }
+
     /** The provider/plan/account header line, or null when there is nothing to say. */
     function buildProviderHeader(snapshot, t) {
       if (snapshot === null) return null
@@ -5267,15 +5367,19 @@ window.__ModuleLoader__.load({
         } else if (snapshot.provider.kind === 'windows') {
           // A windows provider may ALSO report an independent wallet balance
           // (OpenDesign): show it as one extra row of the same capacity card,
-          // after the allowance windows (or after the "no usage" hint).
+          // after the allowance windows (or after the "no usage" hint). The same
+          // applies to the local period estimate (v1.5.0).
           const balanceRow = buildCapacityBalanceRow(snapshot.balance, t)
+          const designPlanRow = buildDesignPlanRow(snapshot.designPlan, t)
           if (snapshot.windows !== null) {
             const rows = WINDOW_ORDER.map((id) => buildWindowRow(id, snapshot.windows[id], state, now, t, statsRow))
             if (balanceRow !== null) rows.push(balanceRow)
+            if (designPlanRow !== null) rows.push(designPlanRow)
             section.push(h('div', { key: 'rows', className: 'dsh-tokenlens-rows' }, rows))
           } else {
             section.push(h('div', { key: 'no-windows', className: 'dsh-tokenlens-hint' }, t('chipNoUsage')))
             if (balanceRow !== null) section.push(balanceRow)
+            if (designPlanRow !== null) section.push(designPlanRow)
           }
         } else {
           section.push(h('div', { key: 'no-kind', className: 'dsh-tokenlens-hint' }, t('chipNoUsage')))

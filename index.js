@@ -38,6 +38,13 @@ import {
   saveProviderStore,
 } from './lib/provider-store.mjs'
 import { makeCustomAdapter, sanitizeUsageBaseURL, validateCustomProvider } from './lib/custom-provider.mjs'
+import {
+  defaultDesignPlanLedgerFile,
+  loadLedger,
+  observeDesignPlan,
+  saveLedger,
+  summarizeDesignPlan,
+} from './lib/design-plan-ledger.mjs'
 import { redactEndpoint, redactPaths, redactTextPaths } from './lib/redact.mjs'
 import { UPDATE_CHECK_URL, UPDATE_PACKAGE_URL, buildUpdateInfo, parseLatestVersion } from './lib/update-check.mjs'
 
@@ -76,7 +83,7 @@ export const inject = []
 export const PLUGIN_NAME = 'dsh-tokenlens'
 
 /** Plugin version; mirrors package.json (kept here so diagnostics need no fs read). */
-export const PLUGIN_VERSION = '1.4.0'
+export const PLUGIN_VERSION = '1.5.0'
 
 /** Documented defaults; every field of the raw row config is optional. */
 const DEFAULTS = {
@@ -88,6 +95,8 @@ const DEFAULTS = {
   statusFile: '',
   // Empty selects $DSH_HOME/dsh-tokenlens/providers.json.
   providerStoreFile: '',
+  // Empty selects $DSH_HOME/dsh-tokenlens/design-plan-ledger.json.
+  designPlanLedgerFile: '',
   stats: {
     enabled: true,
     ttlMs: 30_000,
@@ -175,6 +184,10 @@ export function normalize(raw) {
     statusFile: typeof value.statusFile === 'string' ? value.statusFile : DEFAULTS.statusFile,
     providerStoreFile:
       typeof value.providerStoreFile === 'string' ? value.providerStoreFile : DEFAULTS.providerStoreFile,
+    designPlanLedgerFile:
+      typeof value.designPlanLedgerFile === 'string'
+        ? value.designPlanLedgerFile
+        : DEFAULTS.designPlanLedgerFile,
     stats: {
       enabled: statsRaw.enabled !== false,
       ttlMs: nonNegative(statsRaw.ttlMs, DEFAULTS.stats.ttlMs),
@@ -382,6 +395,49 @@ export function apply(ctx, rawConfig) {
   const providerStoreFile =
     config.providerStoreFile !== '' ? config.providerStoreFile : defaultProviderStoreFile(dshHomeOf(process.env))
   let providerStore = loadProviderStore(providerStoreFile)
+
+  // Design Plan period ledger (v1.5.0): OpenDesign serves rolling 5h/7d windows
+  // but no period-usage endpoint, so the Host accumulates what it observes.
+  const designPlanLedgerFile =
+    config.designPlanLedgerFile !== ''
+      ? config.designPlanLedgerFile
+      : defaultDesignPlanLedgerFile(dshHomeOf(process.env))
+  let designPlanLedger = loadLedger(designPlanLedgerFile)
+
+  /**
+   * Fold one OpenDesign observation into the period ledger.
+   *
+   * `designPlan` is the provider read's extra context (period bounds + credits
+   * rate + the upstream window rows); it is absent for every other provider and
+   * whenever the quota route was unreadable, in which case nothing is recorded.
+   */
+  function recordDesignPlan(designPlan, now) {
+    if (designPlan === null || typeof designPlan !== 'object') return
+    const folded = observeDesignPlan(designPlanLedger, {
+      periodStart: designPlan.periodStart,
+      periodEnd: designPlan.periodEnd,
+      creditsPerUsd: designPlan.creditsPerUsd,
+      windows: designPlan.windows,
+      now,
+    })
+    if (!folded.changed) return
+    try {
+      designPlanLedger = saveLedger(designPlanLedgerFile, folded.ledger)
+      noteStatus('design-plan-ledger', { designPlanLedgerFile })
+    } catch (error) {
+      // A ledger write must never break a usage read: keep the in-memory fold.
+      designPlanLedger = folded.ledger
+      warn(`design plan ledger write failed: ${String(error?.message ?? error)}`)
+    }
+  }
+
+  /** The period estimate for the open-design snapshot, or null. */
+  function designPlanSummaryFor(providerId, designPlan) {
+    if (canonicalProviderId(providerId) !== 'open-design') return null
+    const periodStart = designPlan?.periodStart
+    if (typeof periodStart !== 'string' || periodStart === '') return null
+    return summarizeDesignPlan(designPlanLedger, periodStart)
+  }
 
   /** Built-in defaults + profile config + management-page overrides. */
   function effectiveProviderConfig(providerId) {
@@ -1110,6 +1166,11 @@ export function apply(ctx, rawConfig) {
   }
 
   function snapshotFromResult(providerId, read, now) {
+    // v1.5.0: the Design Plan period estimate. The ledger observes every read
+    // (refreshes and background polls), then the current period is summarized
+    // into the snapshot so the dialog can show it without a second round-trip.
+    recordDesignPlan(read.result.designPlan ?? null, now)
+    const designPlan = designPlanSummaryFor(providerId, read.result.designPlan)
     return buildSnapshot({
       provider: providerInfo(providerId),
       plan: read.result.plan ?? null,
@@ -1118,6 +1179,8 @@ export function apply(ctx, rawConfig) {
       credits: read.result.credits ?? null,
       account: read.result.account ?? null,
       links: consoleLinks(providerId, read.result),
+      // Only open-design reports a period estimate (see design-plan-ledger.mjs).
+      ...(designPlan === null ? {} : { designPlan }),
       fetchedAtMs: read.fetchedAtMs,
       now,
       latencyMs: read.latencyMs,

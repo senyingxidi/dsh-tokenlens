@@ -103,7 +103,7 @@ test('buildSnapshot / asCacheHit / asStaleCache follow the wire contract', () =>
     key: { ref: 'OPENCODE_GO_API_KEY', source: 'credentials' },
   })
   assert.equal(snapshot.ok, true)
-  assert.equal(snapshot.version, 3)
+  assert.equal(snapshot.version, 4, 'v1.5.0 added the optional designPlan field')
   assert.equal(snapshot.fetchedAt, '2026-10-25T09:03:00.000Z')
   assert.equal(snapshot.ageMs, 500)
   assert.equal(snapshot.latencyMs, 87)
@@ -113,6 +113,7 @@ test('buildSnapshot / asCacheHit / asStaleCache follow the wire contract', () =>
   assert.equal(snapshot.balance, null)
   assert.equal(snapshot.credits, null)
   assert.equal(snapshot.account, null)
+  assert.equal('designPlan' in snapshot, false, 'only a provider with a period estimate carries the field')
   assert.deepEqual(snapshot.key, { ref: 'OPENCODE_GO_API_KEY', source: 'credentials' })
 
   const hit = asCacheHit(snapshot, NOW + 5000)
@@ -1033,6 +1034,167 @@ test('a Control Key saved from the management page is used as the Open Design cr
   const quotaCall = calls[calls.length - 2]
   assert.equal(quotaCall.init.headers.authorization, 'Bearer od_control_from_ui')
   assert.equal(quotaCall.init.headers['x-vela-workspace-id'], 'ws_key')
+})
+
+test('the Host accumulates an open-design period estimate in its own ledger (v1.5.0)', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'tokenlens-od-ledger-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const ledgerFile = join(dir, 'design-plan-ledger.json')
+  const periodStart = '2026-11-02T09:53:18.000Z'
+  const periodEnd = '2026-12-02T09:53:18.000Z'
+  const weekStart = '2026-11-02T09:53:18.000Z'
+
+  // The first read has the plugin observing mid-window, the second shows more
+  // usage of the same window instance: the ledger must keep the maximum.
+  let used = 30000
+  const { captured } = harness(t, {
+    credentials: { resolve: async () => ({ value: 'vela_ctrl_test', source: 'config' }) },
+    config: {
+      minRefreshIntervalMs: 0,
+      pollIntervalMs: 0,
+      providerStoreFile: join(dir, 'providers.json'),
+      designPlanLedgerFile: ledgerFile,
+      providers: { 'open-design': { enabled: true, workspaceId: 'ws_ledger', controlKeyRef: 'OPENDESIGN_CONTROL_KEY' } },
+    },
+  })
+  stubFetch(t, (call, url) => {
+    const text = String(url)
+    if (text.includes('/wallet/balance')) {
+      return jsonResponse({
+        billingScopeVersion: 2,
+        workspaceId: 'ws_ledger',
+        workspaceMemberId: 'member_1',
+        balanceUsd: '1.00',
+      })
+    }
+    if (text.includes('/billing/summary')) {
+      return jsonResponse({
+        membershipTier: 'go',
+        creditsPerUsd: 10000,
+        subscriptionCurrentPeriodStart: periodStart,
+        subscriptionCurrentPeriodEnd: periodEnd,
+      })
+    }
+    return jsonResponse({
+      schemaVersion: 1,
+      workspaceId: 'ws_ledger',
+      workspaceMemberId: 'member_1',
+      codingPlan: {
+        workspaceId: 'ws_ledger',
+        eligible: true,
+        tier: 'go',
+        windows: [
+          // The overlapping 5-hour window must not be added to the total.
+          {
+            policyId: 'p5h',
+            durationSeconds: 18000,
+            usedCredits: String(used),
+            limitCredits: '50000',
+            remainingCredits: '1',
+            windowStart: weekStart,
+            resetsAt: '2026-11-02T14:53:18.000Z',
+          },
+          {
+            policyId: 'p7d',
+            durationSeconds: 604800,
+            usedCredits: String(used),
+            limitCredits: '150000',
+            remainingCredits: '1',
+            windowStart: weekStart,
+            resetsAt: '2026-11-09T09:53:18.000Z',
+          },
+        ],
+      },
+    })
+  })
+
+  const first = await bridge(captured, { action: 'providerTest', providerId: 'open-design' })
+  assert.equal(first.body.ok, true)
+  assert.equal(first.body.snapshot.designPlan.usedCredits, 30000, 'the first observation seeds the period')
+  assert.equal(first.body.snapshot.designPlan.estimatedUsd, 3)
+  assert.equal(first.body.snapshot.designPlan.windows, 1)
+  assert.equal(first.body.snapshot.designPlan.complete, true, 'the window starts at the period start')
+  assert.equal(
+    JSON.stringify(first.body.snapshot).includes('"p5h"'),
+    false,
+    'the raw upstream window rows never cross the wire',
+  )
+
+  used = 45000
+  const second = await bridge(captured, { action: 'providerTest', providerId: 'open-design' })
+  assert.equal(second.body.snapshot.designPlan.usedCredits, 45000, 'the same window instance keeps its maximum')
+
+  // A transient smaller read must not lower the recorded value.
+  used = 100
+  const third = await bridge(captured, { action: 'providerTest', providerId: 'open-design' })
+  assert.equal(third.body.snapshot.designPlan.usedCredits, 45000)
+
+  const ledger = JSON.parse(await readFile(ledgerFile, 'utf8'))
+  assert.equal(ledger.version, 1)
+  assert.equal(ledger.periods[periodStart].windows[weekStart].usedCredits, 45000)
+  assert.equal(ledger.periods[periodStart].creditsPerUsd, 10000)
+  assert.equal(ledger.periods[periodStart].periodEnd, periodEnd)
+
+  // Other providers carry no period estimate at all.
+  stubFetch(t, () => jsonResponse(LIVE_PAYLOAD))
+  const opencode = await bridge(captured, { action: 'providerTest', providerId: 'opencode-go' })
+  assert.equal('designPlan' in opencode.body.snapshot, false)
+})
+
+test('a failing ledger write never breaks the usage read', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'tokenlens-od-ledger-fail-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  // Point the ledger at a path that cannot be a file (a directory exists there).
+  const blocked = join(dir, 'blocked')
+  await mkdir(blocked, { recursive: true })
+  const { captured } = harness(t, {
+    credentials: { resolve: async () => ({ value: 'vela_ctrl_test', source: 'config' }) },
+    config: {
+      minRefreshIntervalMs: 0,
+      pollIntervalMs: 0,
+      providerStoreFile: join(dir, 'providers.json'),
+      designPlanLedgerFile: blocked,
+      providers: { 'open-design': { enabled: true, workspaceId: 'ws_x', controlKeyRef: 'OPENDESIGN_CONTROL_KEY' } },
+    },
+  })
+  stubFetch(t, (call, url) => {
+    const text = String(url)
+    if (text.includes('/wallet/balance')) {
+      return jsonResponse({ billingScopeVersion: 2, workspaceId: 'ws_x', workspaceMemberId: 'm', balanceUsd: '1.00' })
+    }
+    if (text.includes('/billing/summary')) {
+      return jsonResponse({
+        membershipTier: 'go',
+        creditsPerUsd: 10000,
+        subscriptionCurrentPeriodStart: '2026-11-02T09:53:18.000Z',
+      })
+    }
+    return jsonResponse({
+      schemaVersion: 1,
+      workspaceId: 'ws_x',
+      workspaceMemberId: 'm',
+      codingPlan: {
+        workspaceId: 'ws_x',
+        eligible: true,
+        windows: [
+          {
+            policyId: 'p',
+            durationSeconds: 604800,
+            usedCredits: '1000',
+            limitCredits: '150000',
+            remainingCredits: '149000',
+            windowStart: '2026-11-02T09:53:18.000Z',
+            resetsAt: '2026-11-09T09:53:18.000Z',
+          },
+        ],
+      },
+    })
+  })
+
+  const tested = await bridge(captured, { action: 'providerTest', providerId: 'open-design' })
+  assert.equal(tested.body.ok, true, 'the read still succeeds')
+  assert.equal(tested.body.snapshot.balance.amount, 1)
+  assert.equal(tested.body.snapshot.designPlan.usedCredits, 1000, 'the in-memory fold still reports the estimate')
 })
 
 test('unknown actions are refused with the legal list', async (t) => {

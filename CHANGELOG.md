@@ -4,6 +4,19 @@
 
 **版本记录约定**：同一发布日只保留一个章节，标题取当日**最后一个**已发布版本号；当日多次发布的改动合并到该章节，并在标题下注明当日实际发布过的版本号（npm 上仍可安装这些独立版本）。若当日已有发布，后续小改动不再单独增加版本号，而是并入下一篇日志。这样日志按天规整、不出现同日多个小版本。
 
+## 1.5.0 — 2026-11-02
+
+（当日已发布版本：v1.3.5 / v1.3.6 / v1.3.7 / v1.3.8 / v1.3.9 / v1.4.0 / v1.5.0）
+
+- **feat(open-design): 本机累加 Design Plan 周期用量估算**——Open Design 只提供滚动的 5 小时 / 7 天窗口，**没有「本账期已用」接口**（控制台的 `/billing/usage`、`/billing/coding-plan-usage` 都是 cookie 会话鉴权，Control Key 一律 401）。插件改为累加它观测到的 7 天窗口：每个窗口实例记录历史最大 `usedCredits`，把同一账期内已完成 + 当前的窗口相加，再按 `creditsPerUsd` 折算成美元
+- feat(open-design): **只统计 7 天窗口**——5 小时窗口测量的是同一笔消耗（实测两者 `usedCredits` 完全相同），相加会双重计数
+- feat(open-design): 估算带**覆盖率标注**——`complete: true` 仅当最早观测到的窗口起点等于账期起点；否则显示「仅统计已观测的 N 个窗口」，绝不把下限当完整值
+- feat(wire): snapshot 升到 v4，新增可选 `designPlan: {periodStart, periodEnd, usedCredits, estimatedUsd, windows, complete, since, limitPerWindow}`（仅 open-design）；原始上游窗口行不下发
+- feat(storage): 新增 `$DSH_HOME/dsh-tokenlens/design-plan-ledger.json`（原子写、0600、仅数字与时间戳、保留 6 个账期）；写入失败只降级为内存折叠，绝不影响用量读取
+- feat(ui): 容量卡片新增一行「本期 Design Plan 累计 $X（≈ N 个周额度 · 已覆盖本账期全部窗口 / 仅统计已观测的 N 个窗口）」，悬浮说明「Open Design 没有月度用量接口，此值由本机累加观测得出，仅供参考」
+- feat(config): `designPlanLedgerFile` 可配置（空 = 默认路径）
+- 测试：292 → 307（ledger 单测 10 个：只记周窗口不双计、同窗口取最大值、跨窗口累加、完整性判定、账期切换清零、磁盘往返与历史上限；Host 端到端：三次读累积与瞬时回落不降值、原始行不下发、写入失败仍出估算；客户端：完整/部分两种覆盖率渲染、其它供应商不渲染该行）
+
 ## 1.4.0 — 2026-11-02
 
 （当日已发布版本：v1.3.5 / v1.3.6 / v1.3.7 / v1.3.8 / v1.3.9 / v1.4.0）

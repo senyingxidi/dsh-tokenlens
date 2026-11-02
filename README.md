@@ -258,6 +258,7 @@ Control Key 是 **Open Design 桌面端/CLI 登录时写入本机的会话凭据
     pollIntervalMs: 120000              # 后台轮询间隔（毫秒）；0 = 关闭轮询
     statusFile: ''                      # 诊断状态 JSON 路径；空 = 不写文件
     providerStoreFile: ''               # 空 = $DSH_HOME/dsh-tokenlens/providers.json
+    designPlanLedgerFile: ''            # 空 = $DSH_HOME/dsh-tokenlens/design-plan-ledger.json
     stats:
       enabled: true
       ttlMs: 30000                      # 统计结果复用时长；fresh:true 强制重扫
@@ -326,6 +327,7 @@ Control Key 是 **Open Design 桌面端/CLI 登录时写入本机的会话凭据
 - OpenCode 的额度定义见[官方文档](https://opencode.ai/docs/go/#usage-limits)（5h = 月度额度的 20%、周 = 50%、月 = 100%）；接口只返回百分比，插件也只画百分比。
 - Command Code 的 `/alpha/*` 是官方 CLI 自用的私有计费路由；免费 / 无方案账户返回空窗口（显示 `—`），插件不会用方案目录猜额度。
 - Open Design 的窗口按账户实际返回的时长渲染：Go 同时有 5 小时和 7 天窗口，Plus / Pro / Max 只有 7 天窗口；钱包余额是独立于窗口的 USD 额度，用尽后继续扣钱包。查询要求工作区权限，鉴权失败会明确显示错误而不是 0；工作区 ID 与 Control Key 缺任一项时，弹窗会指出缺哪一项并给出「去配置」入口（v1.3.5）。窗口、余额、套餐档位是**三层独立读取**（v1.4.0）：任一接口不可用时只少那一块数据，不会整套报错。
+- **「本期 Design Plan 累计」是插件本机算的估算值**（v1.5.0）。Open Design 有月度额度（Go 为每月 $120 = 4 × 每周 $30），但**没有「本账期已用」接口**——控制台的 `/billing/usage`、`/billing/coding-plan-usage` 都靠浏览器 Cookie 鉴权，Control Key 一律 401。于是插件累加它观测到的 **7 天窗口**（只记 7 天，因为 5 小时窗口测量的是同一笔消耗，相加会重复计数），按 `creditsPerUsd` 折算成美元；弹窗会标注覆盖情况（「已覆盖本账期全部窗口」或「仅统计已观测的 N 个窗口」），插件没运行期间错过的窗口无法计入。
 - 未配置凭据的供应商 chip 静默隐藏；`zai`、`minimax`、`deepinfra` 属 best-effort 适配（未公开接口，失败时按可重试错误优雅降级）。
 - 各供应商的元数据（`kind` / `label` / `shortLabel` / `baseURL` / `apiKeyRef` / `consoleUrl`）集中在 `lib/providers.mjs` 的 `PROVIDER_DEFAULTS` 与 `ADAPTERS` 中，新增适配器只需在该文件登记并补测试。
 
@@ -437,7 +439,7 @@ Host 半注册 `tokenlens_usage`，参数 `action`（默认 `snapshot`）与可�
 
 ## 验证
 
-- `node --test`：**292 个自动化用例**，覆盖 Host 数据层、供应商适配器、统计折叠、各 harness 读取、插件集成与浏览器端渲染 / 交互。
+- `node --test`：**307 个自动化用例**，覆盖 Host 数据层、供应商适配器、统计折叠、各 harness 读取、Design Plan 周期账本、插件集成与浏览器端渲染 / 交互。
 - 在真实环境中验证过 **5 个 harness** 的数据源；本机统计与独立的 SQLite 查询、独立的日志解析逐项对账（差额为 0），跨 harness 合并与供应商映射算术自洽。
 - 供应商接口按各官方文档与参考客户端行为验证；未配置凭据时 chip 静默隐藏，接口异常时按可重试错误降级。
 
