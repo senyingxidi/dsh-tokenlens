@@ -109,6 +109,11 @@ Credentials come from DSH itself: providers configured in DSH inherit their `api
 
 Open Design (OpenDesign) is the exception: its read-only billing API needs a **workspace ID** plus a **Control Key** (`OPENDESIGN_CONTROL_KEY` or `VELA_CONTROL_KEY`), which is *not* the inference API key from the Cloud API Keys page. Set the workspace ID right on the provider management page's Open Design card (v1.3.5, stored in the plugin's own config and kept across restarts), under `providers.open-design.workspaceId`, or via `OPENDESIGN_WORKSPACE_ID`; provide the Control Key through the environment, DSH credentials, or the management page's key field. When either is missing the detail dialog names the missing piece and offers a 「去配置 / Configure」 button instead of a generic missing-key error.
 
+**Where the two values come from.** Neither is on the Cloud API Keys page.
+
+- *Workspace ID* — the console keeps it in the URL: open 套餐与余额 (or 成员) and read `open-design.ai/cloud/dashboard?workspaceId=<the id>`; the member-invite confirmation page also prints it as 「工作空间 ID」.
+- *Control Key* — a session credential that the Open Design desktop app / `vela` CLI writes to `~/.amr/config.json` when you sign in (`profiles.prod.controlKey`). Sign in once with the desktop app, or run `vela login` and approve the browser prompt, then copy that value (or point the plugin at it). Pasting the inference key instead makes the quota call answer HTTP 401.
+
 See the [Chinese README](README.md) for the full configuration reference, preview and provider tables.
 
 ## Supported providers and harnesses

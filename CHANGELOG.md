@@ -4,9 +4,9 @@
 
 **版本记录约定**：同一发布日只保留一个章节，标题取当日**最后一个**已发布版本号；当日多次发布的改动合并到该章节，并在标题下注明当日实际发布过的版本号（npm 上仍可安装这些独立版本）。若当日已有发布，后续小改动不再单独增加版本号，而是并入下一篇日志。这样日志按天规整、不出现同日多个小版本。
 
-## 1.3.6 — 2026-11-02
+## 1.3.7 — 2026-11-02
 
-（当日已发布版本：v1.3.5 / v1.3.6）
+（当日已发布版本：v1.3.5 / v1.3.6 / v1.3.7）
 
 - feat(ui): 供应商管理页可为 **Open Design** 填写「工作区 ID」并持久化到插件配置——此前 workspaceId 只能在 profile patch 或 `OPENDESIGN_WORKSPACE_ID` 里设置，用推理 Key 配好供应商后额度卡片仍报错却无处可改
 - feat(ui): Open Design 额度失败时的引导——详情弹窗的错误条说明「额度查询需要工作区 ID 与 Control Key（不是推理 Key）」，并提供「去配置」按钮直接跳到供应商管理页
@@ -14,6 +14,7 @@
 - feat(wire): `providers[]` 仅对声明了 workspace 的适配器（Open Design）下发 `workspaceId` 字段；其余供应商不下发，客户端据此决定是否渲染输入框（旧 Host 无此字段 ⇒ 不渲染，自然降级）
 - feat(ui): Open Design 缺配置时 chip 不再按 `missing-key` 静默隐藏，而是显示「待配置」并可点进详情看引导——否则用户既看不到提示也没有入口
 - fix(tool): Agent 工具 `tokenlens_usage` 的 `updateCheck` 动作此前虽在枚举里却会落到用量读取分支，返回当前供应商的用量或错误；现在正确执行更新检查并返回 `UpdateInfo`
+- docs: 中英 README 补充 **workspace ID 与 Control Key 到底在哪里取**——workspace ID 在控制台 URL 的 `?workspaceId=`（或成员邀请页的「工作空间 ID」），Control Key 是桌面端 / `vela login` 写入 `~/.amr/config.json` 的 `profiles.prod.controlKey`；并说明用推理 Key 冒充会得到 401
 - 测试：280 → 286（workspace ID 校验/持久化/清空、管理页字段渲染与保存、缺 workspaceId 的 Host 报错与引导按钮、待配置 chip、工具 updateCheck 分发）
 
 ## 1.3.4 — 2026-11-01

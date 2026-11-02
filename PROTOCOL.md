@@ -112,6 +112,15 @@ A `windows` snapshot may also carry a non-null `balance` (Open Design reports
 allowance windows and a wallet independently); the Client renders it as one extra
 row at the end of the capacity card and appends the amount to the chip tooltip.
 
+`open-design` needs two credentials that the API-keys page does not provide: a
+**workspace id** (the console URL's `?workspaceId=` value) and a **Control Key**
+(the `profiles.prod.controlKey` the desktop app / `vela login` writes to
+`~/.amr/config.json`). The inference key from the Cloud API Keys page answers
+HTTP 401 on the billing endpoints. Missing either value is a `missing-key` error;
+the workspace id may be set from the management page (persisted in
+`providers.json`, v1.3.5) and the Control Key comes from `OPENDESIGN_CONTROL_KEY`,
+`VELA_CONTROL_KEY`, the credential store, or that page's key field.
+
 Rules:
 
 - `percent` is clamped to `0..100`; an unknown percentage is `null` (render "—"), never a fake 0.

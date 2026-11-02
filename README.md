@@ -195,6 +195,47 @@ dsh plugin --profile <profile> remove dsh-tokenlens
 - **Open Design（OpenDesign）** 的额度查询需要 OpenDesign Cloud 的 **workspace ID + Control Key**（`OPENDESIGN_CONTROL_KEY` 或 `VELA_CONTROL_KEY`），**不是** Cloud API Keys 页的推理 Key（推理 Key 只能调用模型）。workspace ID 可直接在[供应商管理页](#供应商管理)的 Open Design 卡片里填写（v1.3.5，保存在插件自己的配置里，重启后仍在），或写在 provider 配置里，或用 `OPENDESIGN_WORKSPACE_ID` 环境变量；Control Key 通过环境变量 / DSH 凭据 / 管理页的 Key 输入框提供。
 - 配置不全时，详情弹窗会说明缺哪一项并提供「去配置」按钮，而不是只显示一个笼统的「没有找到该供应商的 API Key」。
 
+### 拿到 Open Design 的 workspace ID 与 Control Key
+
+这两样都**不在** Cloud 控制台的 API Keys 页面（那里只有推理 Key）。具体步骤：
+
+**1. workspace ID**
+
+控制台的页面路由里带着它，任选一种：
+
+- 在 Cloud 控制台里随便点进「套餐与余额」或「成员」，看地址栏：`open-design.ai/cloud/dashboard?workspaceId=<这一串>`；把 `workspaceId=` 后面的值复制出来即可。
+- 或者打开「成员」页 → 邀请成员，邀请确认页会以「工作空间 ID」为标签直接显示这个值。
+- 或者装了桌面端时，本机 `~/.amr/config.json` 的 `profiles.prod` 里也记录了当前会话对应的 workspace（键名 `controlKey` 同级的配置块）。
+
+**2. Control Key**
+
+Control Key 是 **Open Design 桌面端/CLI 登录时写入本机的会话凭据**，不是控制台上可以生成的一串字。它由桌面客户端或 `vela` CLI 在登录后写进 `~/.amr/config.json`：
+
+```jsonc
+// ~/.amr/config.json（Windows: C:\Users\<你>\.amr\config.json）
+{
+  "profiles": {
+    "prod": {
+      "controlKey": "……",   // ← 这就是额度查询要的 Control Key
+      "runtimeKey": "……"
+    }
+  }
+}
+```
+
+取得它的方式（任选一种）：
+
+- **桌面端登录一次**：安装并启动 Open Design 桌面端 → 登录 Cloud 账号。客户端完成登录后会在本机写入 `~/.amr/config.json`（同时 CLI 也已就位）。
+- **CLI 登录**：在装有 `vela` 命令的机器上执行 `vela login`，按终端提示打开激活链接、在浏览器里确认（"Approve CLI login"），完成后同样写入 `~/.amr/config.json`。
+- 已有 `~/.amr/config.json` 的话直接打开取 `profiles.prod.controlKey` 即可。
+
+拿到后两种放法：
+
+- 写进 `$DSH_HOME/.credentials.yaml` 的 `refs:` 下：`OPENDESIGN_CONTROL_KEY: <control key>`（或环境变量 `OPENDESIGN_CONTROL_KEY` / `VELA_CONTROL_KEY`）；
+- workspace ID 在插件的[供应商管理页](#供应商管理) Open Design 卡片里填写，或用 `OPENDESIGN_WORKSPACE_ID` 环境变量。
+
+> 这也解释了最容易踩的坑：**用推理 Key 填 Control Key** 会让额度查询返回 401。插件已经区分这两种凭据，缺哪一项都会指名道姓地提示。
+
 解析顺序（先命中先用）：DSH 凭据服务 → 环境变量 → `$DSH_HOME/.credentials.yaml` → OpenCode CLI 的 `auth.json`（仅默认的 `OPENCODE_GO_API_KEY` 引用）。
 
 凭据只在 Host 进程内解析，**不会**下发到浏览器、**不会**写入日志或诊断输出（诊断只显示来源与引用名，不显示明文）。
