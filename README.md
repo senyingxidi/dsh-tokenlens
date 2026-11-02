@@ -201,11 +201,11 @@ dsh plugin --profile <profile> remove dsh-tokenlens
 
 **1. workspace ID**
 
-控制台的页面路由里带着它，任选一种：
+这个控制台**没有单独一栏显示工作区 ID**（截图里的「套餐与余额」页只有额度、余额、充值），它只出现在两处：
 
-- 在 Cloud 控制台里随便点进「套餐与余额」或「成员」，看地址栏：`open-design.ai/cloud/dashboard?workspaceId=<这一串>`；把 `workspaceId=` 后面的值复制出来即可。
-- 或者打开「成员」页 → 邀请成员，邀请确认页会以「工作空间 ID」为标签直接显示这个值。
-- 或者装了桌面端时，本机 `~/.amr/config.json` 的 `profiles.prod` 里也记录了当前会话对应的 workspace（键名 `controlKey` 同级的配置块）。
+- **地址栏**：在 Cloud 控制台里点进「套餐与余额」或「成员」等任意页面，地址会变成 `open-design.ai/cloud/dashboard?workspaceId=<这一串>`——`workspaceId=` 后面、`&` 之前的整段就是。这是最可靠的取法。
+- **成员邀请预览页**：生成一条成员邀请并打开它，确认页会把「工作空间 ID」作为一条信息列出来。
+- 装了桌面端的话，本机 `~/.amr/config.json` 只保存 `controlKey` / `runtimeKey` / `apiUrl` / `linkUrl`，**不含** workspace ID，别在这里找。
 
 **2. Control Key**
 

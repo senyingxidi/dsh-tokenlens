@@ -111,7 +111,7 @@ Open Design (OpenDesign) is the exception: its read-only billing API needs a **w
 
 **Where the two values come from.** Neither is on the Cloud API Keys page.
 
-- *Workspace ID* — the console keeps it in the URL: open 套餐与余额 (or 成员) and read `open-design.ai/cloud/dashboard?workspaceId=<the id>`; the member-invite confirmation page also prints it as 「工作空间 ID」.
+- *Workspace ID* — the console has **no dedicated field for it**; it appears in the address bar: open 套餐与余额 or 成员 and read `open-design.ai/cloud/dashboard?workspaceId=<the id>`. A member-invite preview page also lists it as 「工作空间 ID」. `~/.amr/config.json` stores only the keys/URLs, not the workspace id.
 - *Control Key* — a session credential that the Open Design desktop app / `vela` CLI writes to `~/.amr/config.json` when you sign in (`profiles.prod.controlKey`). Sign in once with the desktop app, or run `vela login` and approve the browser prompt, then copy that value (or point the plugin at it). Pasting the inference key instead makes the quota call answer HTTP 401.
 
 See the [Chinese README](README.md) for the full configuration reference, preview and provider tables.
