@@ -1437,8 +1437,29 @@ test('the optional update check compares the published npm version', async (t) =
   assert.equal(list.body.version, PLUGIN_VERSION, 'the providers payload names the running Host version')
 })
 
-test('a failed update check is reported, never thrown', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'tokenlens-update-fail-'))
+test('the agent tool dispatches updateCheck to the registry, not to a usage read (v1.3.5)', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'tokenlens-tool-update-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const { captured } = harness(t, {
+    credentials: okCredentials,
+    config: { minRefreshIntervalMs: 0, pollIntervalMs: 0, providerStoreFile: join(dir, 'providers.json') },
+  })
+  const calls = stubFetch(t, (call, url) =>
+    String(url).includes('registry.npmjs.org') ? jsonResponse({ version: '99.2.0' }) : jsonResponse(LIVE_PAYLOAD),
+  )
+  const result = await captured.tools[0].execute({ action: 'updateCheck' })
+  assert.equal(result.ok, true)
+  assert.equal(result.update.latest, '99.2.0')
+  assert.equal(result.update.available, true)
+  assert.equal(
+    calls.some((call) => String(call.url).includes('registry.npmjs.org')),
+    true,
+    'the tool asked the registry',
+  )
+  assert.equal(calls.some((call) => String(call.url).includes('opencode.ai')), false, 'no usage read happened')
+})
+
+test('a failed update check is reported, never thrown', async (t) => {  const dir = await mkdtemp(join(tmpdir(), 'tokenlens-update-fail-'))
   t.after(() => rm(dir, { recursive: true, force: true }))
   const { captured } = harness(t, {
     credentials: okCredentials,

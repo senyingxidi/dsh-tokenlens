@@ -76,7 +76,7 @@ export const inject = []
 export const PLUGIN_NAME = 'dsh-tokenlens'
 
 /** Plugin version; mirrors package.json (kept here so diagnostics need no fs read). */
-export const PLUGIN_VERSION = '1.3.5'
+export const PLUGIN_VERSION = '1.3.6'
 
 /** Documented defaults; every field of the raw row config is optional. */
 const DEFAULTS = {
@@ -1861,6 +1861,10 @@ export function apply(ctx, rawConfig) {
               : activeProviderId()
           if (action === 'diagnostics') return jsonSafe({ ok: true, diagnostics: diagnostics() })
           if (action === 'stats') return jsonSafe(await getStats())
+          // v1.3.5 fix: `updateCheck` is in TOOL_ACTIONS, so it must dispatch to
+          // the registry check instead of falling through to a usage read (which
+          // used to answer the active provider's error instead of UpdateInfo).
+          if (action === 'updateCheck') return jsonSafe({ ok: true, update: await runUpdateCheck() })
           if (action === 'refresh') return jsonSafe(await get(providerId, { force: true }))
           return jsonSafe(await get(providerId))
         },
