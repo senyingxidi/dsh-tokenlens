@@ -566,6 +566,31 @@ function providersFixtureWithDshCustom(entry) {
   return payload
 }
 
+/**
+ * The providers payload with the Open Design entry (v1.3.5): only this provider
+ * carries a `workspaceId`, which is the wire capability flag for the input.
+ */
+function providersFixtureWithWorkspace(overrides = {}) {
+  const payload = providersFixture()
+  const workspaceId = typeof overrides.workspaceId === 'string' ? overrides.workspaceId : 'ws_existing'
+  payload.providers = [
+    ...payload.providers,
+    providerEntry({
+      providerId: 'open-design',
+      label: 'Open Design',
+      shortLabel: 'OD',
+      kind: 'windows',
+      enabled: true,
+      hasKey: false,
+      keySource: 'none',
+      consoleUrl: 'https://open-design.ai/cloud/dashboard',
+      workspaceId,
+      dshManaged: false,
+    }),
+  ]
+  return payload
+}
+
 /** The default Host handler: provider-aware usage + a healthy stats payload. */
 function defaultHandler() {
   return (payload) => {
@@ -1147,6 +1172,29 @@ test('missing-key and disabled hide the chip as well', async () => {
     } finally {
       plugin.dispose()
     }
+  }
+})
+
+test('a workspace-scoped provider missing its config keeps a 「待配置」 chip as the way in (v1.3.5)', async () => {
+  const plugin = loadPlugin((payload) =>
+    payload.action === 'hello'
+      ? { ok: true }
+      : {
+          ok: false,
+          error: { code: 'missing-key', message: 'OpenDesign quota needs a workspace id', retryable: false },
+          snapshot: null,
+        },
+  )
+  try {
+    const tree = await settleChip(plugin, 'open-design')
+    assert.ok(tree, 'the chip stays so the user can open the guidance')
+    assert.match(textOf(tree), /待配置/, 'it reads as a setup step, not a read failure')
+    const button = findElement(tree, (element) => element.props?.['data-needs-config'] === 'true')
+    assert.ok(button, 'the chip is marked as needing configuration')
+    // Every other provider keeps the protocol's silent hiding.
+    assert.equal(await settleChip(plugin, 'opencode-go'), null, 'other providers still hide the chip')
+  } finally {
+    plugin.dispose()
   }
 })
 
@@ -2413,8 +2461,97 @@ test('saving a console URL sends only providerUpdate {consoleUrl} (no credential
   }
 })
 
-test('no provider editor renders API-key, Base-URL, reveal or clear controls', async () => {
-  const plugin = loadPlugin()
+test('the Open Design editor renders a workspace-ID field and saves only the changed value (v1.3.5)', async () => {
+  const updates = []
+  const plugin = loadPlugin((payload) => {
+    if (payload.action === 'hello') return { ok: true }
+    if (payload.action === 'stats') return { ok: true, stats: statsFixture() }
+    if (payload.action === 'providers') return providersFixtureWithWorkspace()
+    if (payload.action === 'providerUpdate') {
+      updates.push(payload)
+      return providersFixtureWithWorkspace({ workspaceId: payload.update?.workspaceId })
+    }
+    return { ok: true, snapshot: snapshotFixture(payload.providerId) }
+  })
+  try {
+    let tree = await settleManagementAll(plugin)
+    tree = expandPresetSection(plugin, tree)
+    tree = expandProvider(plugin, tree, 'open-design')
+    const input = providerInputOf(tree, 'data-provider-workspaceid', 'open-design')
+    assert.ok(input, 'the workspace-scoped provider offers a workspace-ID input')
+    assert.equal(input.props.value, 'ws_existing', 'the draft is seeded from the wire')
+
+    // No other provider renders the field, not even a DSH-managed one.
+    tree = expandProvider(plugin, tree, 'opencode-go')
+    assert.equal(
+      providerInputOf(tree, 'data-provider-workspaceid', 'opencode-go'),
+      undefined,
+      'a provider whose Host payload carries no workspaceId renders no such input',
+    )
+
+    tree = expandProvider(plugin, tree, 'open-design')
+    providerInputOf(tree, 'data-provider-workspaceid', 'open-design').props.onChange({
+      target: { value: 'ws_typed' },
+    })
+    tree = renderDialog(plugin)
+    assert.equal(providerInputOf(tree, 'data-provider-workspaceid', 'open-design').props.value, 'ws_typed')
+    editorButtonOf(tree, 'dsh-tokenlens-save').props.onClick()
+    await settle()
+
+    assert.equal(updates.length, 1, 'one update is sent')
+    assert.equal(updates[0].providerId, 'open-design')
+    assert.deepEqual(updates[0].update, { workspaceId: 'ws_typed' }, 'only the changed workspace id is sent')
+  } finally {
+    plugin.dispose()
+  }
+})
+
+test('an Open Design missing-key banner explains the requirement and links to the management page', async () => {
+  let failing = false
+  const plugin = loadPlugin((payload) => {
+    if (payload.action === 'hello') return { ok: true }
+    if (payload.action === 'stats') return { ok: true, stats: statsFixture() }
+    if (payload.action === 'providers') return providersFixtureWithWorkspace()
+    if (failing && payload.action !== 'hello' && payload.action !== 'stats' && payload.action !== 'providers') {
+      return {
+        ok: false,
+        error: {
+          code: 'missing-key',
+          message: 'OpenDesign quota needs a workspace id: set it on the plugin management page',
+          retryable: false,
+        },
+        snapshot: null,
+      }
+    }
+    return { ok: true, snapshot: snapshotFixture(payload.providerId) }
+  })
+  try {
+    // A missing key hides the chip, so the dialog is opened while the read still
+    // succeeds and the failure is then forced by the refresh button.
+    const tree = await settleDialog(plugin, 'open-design')
+    failing = true
+    const refresh = findElement(tree, (element) => element.props?.className === 'dsh-tokenlens-refresh')
+    assert.ok(refresh, 'the dialog carries a refresh button')
+    refresh.props.onClick()
+    await settle()
+    const failedTree = renderDialog(plugin)
+    const text = textOf(failedTree)
+    assert.match(text, /Open Design 额度查询需要工作区 ID 与 Control Key/)
+    assert.match(text, /set it on the plugin management page/, 'the Host detail line is kept')
+    const configure = findElement(failedTree, (element) => element.props?.className === 'dsh-tokenlens-configure-provider')
+    assert.ok(configure, 'the banner offers a jump to the management page')
+    configure.props.onClick()
+    const managementTree = renderDialog(plugin)
+    assert.ok(
+      findElement(managementTree, (element) => element.props?.['data-manage-tab'] === 'providers'),
+      'the jump switches the dialog body to the management page',
+    )
+  } finally {
+    plugin.dispose()
+  }
+})
+
+test('no provider editor renders API-key, Base-URL, reveal or clear controls', async () => {  const plugin = loadPlugin()
   try {
     let tree = await settleManagementAll(plugin)
     tree = expandPresetSection(plugin, tree)

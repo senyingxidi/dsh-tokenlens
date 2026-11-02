@@ -29,7 +29,9 @@ import {
   DISPLAY_VIEWS,
   LABEL_STYLES,
   STATS_SCOPES,
+  WORKSPACE_ID_MAX,
   defaultProviderStoreFile,
+  isWorkspaceId,
   loadProviderStore,
   mergeProviderOverride,
   sanitizeSettings,
@@ -74,7 +76,7 @@ export const inject = []
 export const PLUGIN_NAME = 'dsh-tokenlens'
 
 /** Plugin version; mirrors package.json (kept here so diagnostics need no fs read). */
-export const PLUGIN_VERSION = '1.3.4'
+export const PLUGIN_VERSION = '1.3.5'
 
 /** Documented defaults; every field of the raw row config is optional. */
 const DEFAULTS = {
@@ -636,6 +638,9 @@ export function apply(ctx, rawConfig) {
         })
         key = { ...key, hasKey: key.hasKey && typeof secret.value === 'string' && secret.value !== '' }
       }
+      // v1.3.5: only adapters whose defaults declare a workspace (Open Design)
+      // advertise the field, so the management page renders it exactly there.
+      const supportsWorkspaceId = Object.prototype.hasOwnProperty.call(PROVIDER_DEFAULTS[id], 'workspaceId')
       providers.push({
         providerId: id,
         label: provider.label,
@@ -647,6 +652,9 @@ export function apply(ctx, rawConfig) {
         apiKeyRef: provider.apiKeyRef ?? '',
         baseURL: provider.baseURL ?? '',
         consoleUrl: provider.consoleUrl ?? '',
+        ...(supportsWorkspaceId
+          ? { workspaceId: typeof provider.workspaceId === 'string' ? provider.workspaceId : '' }
+          : {}),
         builtin: true,
         // Configured through DSH model settings: the management page should
         // inherit the key/base URL instead of asking for them again.
@@ -759,6 +767,17 @@ export function apply(ctx, rawConfig) {
     if (typeof update?.enabled === 'boolean') patch.enabled = update.enabled
     if (typeof update?.apiKey === 'string') patch.apiKey = update.apiKey.trim()
     if (typeof update?.apiKeyRef === 'string') patch.apiKeyRef = update.apiKeyRef.trim()
+    if (typeof update?.workspaceId === 'string') {
+      const workspaceId = update.workspaceId.trim()
+      if (workspaceId !== '' && !isWorkspaceId(workspaceId)) {
+        throw new UsageError(
+          'parse',
+          `provider workspaceId must be 1-${WORKSPACE_ID_MAX} identifier characters (letters, digits, . _ : @ -)`,
+          { retryable: false },
+        )
+      }
+      patch.workspaceId = workspaceId
+    }
     if (typeof update?.baseURL === 'string') {
       const rawBaseURL = update.baseURL.trim()
       patch.baseURL = rawBaseURL === '' ? '' : sanitizeUsageBaseURL(rawBaseURL)
@@ -1019,14 +1038,17 @@ export function apply(ctx, rawConfig) {
       if (workspaceId === '') {
         throw new UsageError(
           'missing-key',
-          'OpenDesign quota needs a workspace id (providers.open-design.workspaceId or OPENDESIGN_WORKSPACE_ID)',
+          'OpenDesign quota needs a workspace id: set it on the plugin management page (open-design → 工作区 ID), ' +
+            'in providers.open-design.workspaceId, or in OPENDESIGN_WORKSPACE_ID',
           { retryable: false },
         )
       }
       if (controlKey === '') {
-        throw new UsageError('missing-key', `OpenDesign quota needs a Control Key (${refs.join(' / ')})`, {
-          retryable: false,
-        })
+        throw new UsageError(
+          'missing-key',
+          `OpenDesign quota needs a Control Key (${refs.join(' / ')}); the Cloud API Keys inference key cannot read billing`,
+          { retryable: false },
+        )
       }
       provider = { ...provider, workspaceId, controlKey }
       keyInfo = { ref: controlRef, source: controlSource, detail: controlDetail }

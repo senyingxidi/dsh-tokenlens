@@ -10,7 +10,9 @@ import test from 'node:test'
 import {
   DEFAULT_SETTINGS,
   DETAILS_WINDOWS,
+  WORKSPACE_ID_MAX,
   defaultProviderStoreFile,
+  isWorkspaceId,
   loadProviderStore,
   mergeProviderOverride,
   sanitizeOverride,
@@ -67,6 +69,26 @@ test('sanitizeOverride keeps only known, correctly typed fields', () => {
     { enabled: true, apiKey: 'k', apiKeyRef: 'REF', label: 'My OpenCode', shortLabel: 'MO', baseURL: 'u' },
   )
   assert.deepEqual(sanitizeOverride(null), {})
+})
+
+test('sanitizeOverride persists a workspace id and refuses unsafe values (v1.3.5)', () => {
+  assert.deepEqual(sanitizeOverride({ workspaceId: '  ws-abc_123  ' }), { workspaceId: 'ws-abc_123' })
+  assert.deepEqual(
+    sanitizeOverride({ workspaceId: '3f7a1c2e-9b4d-4f6a-8c1e-2d3b4a5c6d7e' }),
+    { workspaceId: '3f7a1c2e-9b4d-4f6a-8c1e-2d3b4a5c6d7e' },
+    'a UUID-shaped workspace id round-trips',
+  )
+  assert.deepEqual(sanitizeOverride({ workspaceId: '' }), {}, 'empty clears the override')
+  assert.deepEqual(sanitizeOverride({ workspaceId: '   ' }), {}, 'blank clears the override')
+  assert.deepEqual(sanitizeOverride({ workspaceId: '../admin' }), {}, 'path traversal is refused')
+  assert.deepEqual(sanitizeOverride({ workspaceId: 'ws/../x' }), {}, 'a slash is refused')
+  assert.deepEqual(sanitizeOverride({ workspaceId: 'ws id' }), {}, 'a space is refused')
+  assert.deepEqual(sanitizeOverride({ workspaceId: 'a'.repeat(121) }), {}, 'over-long ids are refused')
+  assert.deepEqual(sanitizeOverride({ workspaceId: 42 }), {}, 'a non-string is refused')
+  assert.equal(isWorkspaceId('ws-1'), true)
+  assert.equal(isWorkspaceId('ws 1'), false)
+  assert.equal(isWorkspaceId('a'.repeat(WORKSPACE_ID_MAX)), true, 'the limit itself is accepted')
+  assert.equal(isWorkspaceId('a'.repeat(WORKSPACE_ID_MAX + 1)), false)
 })
 
 test('mergeProviderOverride: override wins, missing values keep the profile config', () => {

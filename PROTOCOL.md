@@ -305,6 +305,9 @@ with `[path]`.
 Client behaviour:
 
 - `missing-key`, `unsupported-provider`, `disabled` → hide the chip (silent).
+  The one exception (v1.3.5): a provider whose Host payload carries a `workspaceId`
+  field (Open Design) keeps a 「待配置 / Needs setup」 chip on `missing-key`, because
+  hiding it would leave no way to reach the dialog's configuration guidance.
 - everything else → show the chip in a warning state with a retry action.
 
 ## Provider selection (client side)
@@ -327,13 +330,15 @@ needs no provider catalog of its own.
 
 The dialog 「供应商管理」 page talks to three additional actions:
 
-- `{action:"providers"}` → `{ok:true, version, providers:[{providerId,label,shortLabel,kind,enabled,hasKey,keySource,apiKeyRef,baseURL,consoleUrl,builtin,dshManaged,dshProviderId}], dshProviders:[{providerId,label,supported,usageProviderId}], settings:{labelStyle,defaultView,defaultScope,detailsExpanded,detailsWindow,updateCheck}, update:<UpdateInfo|null>, updatePackageUrl, storeFile, storeFileDisplay}`. `storeFile` is the real path (local tooling); `storeFileDisplay` replaces the user's home directory with `~` and is what the management page renders. `version` (v1.3.2) is the running Host version, so a page loaded before an in-place plugin update can refresh a stale `hello` label without a reload. `update` (v1.3.0) is the last update-check result and `updatePackageUrl` the npm page the management UI links to.
-- `{action:"providerUpdate", providerId, update:{enabled?,apiKey?,apiKeyRef?,baseURL?,consoleUrl?,label?,shortLabel?}}` → same list payload;
+- `{action:"providers"}` → `{ok:true, version, providers:[{providerId,label,shortLabel,kind,enabled,hasKey,keySource,apiKeyRef,baseURL,consoleUrl,workspaceId?,builtin,dshManaged,dshProviderId}], dshProviders:[{providerId,label,supported,usageProviderId}], settings:{labelStyle,defaultView,defaultScope,detailsExpanded,detailsWindow,updateCheck}, update:<UpdateInfo|null>, updatePackageUrl, storeFile, storeFileDisplay}`. `storeFile` is the real path (local tooling); `storeFileDisplay` replaces the user's home directory with `~` and is what the management page renders. `version` (v1.3.2) is the running Host version, so a page loaded before an in-place plugin update can refresh a stale `hello` label without a reload. `update` (v1.3.0) is the last update-check result and `updatePackageUrl` the npm page the management UI links to. `workspaceId` (v1.3.5) is present only on adapters whose defaults declare one (currently `open-design`); its mere presence is the capability flag for the management page's workspace-ID input, so a provider without it renders no such field.
+- `{action:"providerUpdate", providerId, update:{enabled?,apiKey?,apiKeyRef?,baseURL?,workspaceId?,consoleUrl?,label?,shortLabel?}}` → same list payload;
   empty strings clear a stored value (falling back to the profile/default). `label` (全名, ≤40 chars) and
-  `shortLabel` (短标签, ≤12 chars) let the management page rename a provider. The shipped management page no
-  longer edits API keys or base URLs: every provider inherits them from DSH model settings, and the page only
-  saves enabled/consoleUrl/label/shortLabel. Overrides are persisted atomically to
-  `$DSH_HOME/dsh-tokenlens/providers.json` (plugin-owned, not the profile patch); the same file also
+  `shortLabel` (短标签, ≤12 chars) let the management page rename a provider. `workspaceId` (v1.3.5, ≤120 chars,
+  charset `[A-Za-z0-9._:@-]`) is the workspace-scoped identifier Open Design's read-only billing API needs; a
+  value that is not identifier-shaped (slashes, whitespace, path traversal) answers `parse` and is never persisted.
+  The shipped management page no longer edits API keys or base URLs: every provider inherits them from DSH model
+  settings, and the page only saves enabled/consoleUrl/workspaceId/label/shortLabel. Overrides are persisted
+  atomically to `$DSH_HOME/dsh-tokenlens/providers.json` (plugin-owned, not the profile patch); the same file also
 - `{action:"providerTest", providerId}` → the normal snapshot envelope (`{ok,snapshot}` or `{ok:false,error}`), forcing one upstream read.
 - `{action:"settingsUpdate", settings:{labelStyle?:"short"|"full", defaultView?:"chart"|"data", defaultScope?:"provider"|"all", detailsExpanded?:"auto"|"expanded"|"collapsed", detailsWindow?:"today"|"last7Days"|"second"|"total", updateCheck?:boolean}}` → the same providers payload; every field is optional and persisted in the store (`settings.*`). `labelStyle` controls whether the composer chip shows each provider's `shortLabel` or full `label`; `defaultView` / `defaultScope` / `detailsExpanded` are the usage-dialog defaults; `detailsWindow` (v1.2.1) is the remembered 明细 donut window (falls back visually to `total` when that window is unavailable on the current provider/host); `updateCheck` (v1.3.0, default `true` since v1.3.1) enables the startup update check — the off→on transition runs one check immediately. Invalid values answer `unsupported-provider`.
 

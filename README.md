@@ -41,7 +41,7 @@
   - **本机 Token 统计**：今日 / 最近 7 天 / 最近 30 天 / 总计（订阅类供应商显示「最近 X 天」生效窗口），可按「当前供应商 · 全部 Harness」与「全部 Harness」两个视角查看。
   - **明细与图表**：按 Harness、按供应商、Top 模型、未映射供应商分组；支持「数据」（表格）与「图表」两种模式切换。图表模式里点击某一天的柱子可下钻查看**当天 24 小时**的 Token 消耗，底部「明细」环形图支持 **今日 / 最近 7 天 / 最近 X 天（或最近 30 天）/ 总计** 窗口切换。
   - **工作区徽标**（实验性）：左侧工作区列表的名称旁显示该工作区的本机 Token 合计，悬浮卡片显示今日 / 7 天 / 30 天 / 总计；纯展示，找不到对应 UI 时自动降级。
-- **供应商管理页**：「已配置 / 内置 / 全部」筛选、启用开关、凭据状态、控制台链接、短标签与全名编辑、测试连接、已订阅徽章；另有「插件设置」可配置标签样式、默认展示模式、默认统计范围、明细展开状态、图表「明细」环形图的默认窗口（今日 / 最近 7 天 / 最近 X 天 / 总计，记住上次选择）与「启动时检查更新」（默认开启，可关闭，也可手动立即检查）。
+- **供应商管理页**：「已配置 / 内置 / 全部」筛选、启用开关、凭据状态、控制台链接、短标签与全名编辑、测试连接、已订阅徽章；Open Design 额外提供「工作区 ID」输入（v1.3.5）；另有「插件设置」可配置标签样式、默认展示模式、默认统计范围、明细展开状态、图表「明细」环形图的默认窗口（今日 / 最近 7 天 / 最近 X 天 / 总计，记住上次选择）与「启动时检查更新」（默认开启，可关闭，也可手动立即检查）。
 - **自动识别**：在 DSH「设置 → 模型服务」中配置过的供应商会自动出现在管理页，并按路由 id 或 baseURL 主机匹配内置用量适配器，自动继承 DSH 中的凭据，无需重复填写。
 - **Agent 工具**：注册 `tokenlens_usage`，模型可以自行查询套餐容量与本机用量。
 
@@ -192,7 +192,8 @@ dsh plugin --profile <profile> remove dsh-tokenlens
 - 在 DSH「设置 → 模型服务」中配置过的供应商会被自动识别，插件按路由 id 或 baseURL 主机匹配内置适配器，并继承该路由的 `apiKeyEnv` 凭据。
 - 也可以直接用环境变量提供，例如 `OPENCODE_GO_API_KEY`、`COMMANDCODE_API_KEY`、`DEEPSEEK_API_KEY`、`MOONSHOT_API_KEY` 等（每家供应商的引用见 `lib/providers.mjs`）。
 - 或写入 `$DSH_HOME/.credentials.yaml` 的 `refs:` 映射（与 DSH 凭据服务同一份文档）。
-- **Open Design（OpenDesign）** 的额度查询需要 OpenDesign Cloud 的 **workspace ID + Control Key**（`OPENDESIGN_CONTROL_KEY` 或 `VELA_CONTROL_KEY`），**不是** Cloud API Keys 页的推理 Key（推理 Key 只能调用模型）。workspace ID 写在 provider 配置里，或用 `OPENDESIGN_WORKSPACE_ID` 环境变量；Control Key 也可以在供应商管理页的 Key 输入框填写。
+- **Open Design（OpenDesign）** 的额度查询需要 OpenDesign Cloud 的 **workspace ID + Control Key**（`OPENDESIGN_CONTROL_KEY` 或 `VELA_CONTROL_KEY`），**不是** Cloud API Keys 页的推理 Key（推理 Key 只能调用模型）。workspace ID 可直接在[供应商管理页](#供应商管理)的 Open Design 卡片里填写（v1.3.5，保存在插件自己的配置里，重启后仍在），或写在 provider 配置里，或用 `OPENDESIGN_WORKSPACE_ID` 环境变量；Control Key 通过环境变量 / DSH 凭据 / 管理页的 Key 输入框提供。
+- 配置不全时，详情弹窗会说明缺哪一项并提供「去配置」按钮，而不是只显示一个笼统的「没有找到该供应商的 API Key」。
 
 解析顺序（先命中先用）：DSH 凭据服务 → 环境变量 → `$DSH_HOME/.credentials.yaml` → OpenCode CLI 的 `auth.json`（仅默认的 `OPENCODE_GO_API_KEY` 引用）。
 
@@ -252,7 +253,7 @@ dsh plugin --profile <profile> remove dsh-tokenlens
 
 - 同 id 的配置行**整体替换**插件的默认配置，因此覆盖时请重述所有想保留的字段；
 - `providers.<id>` 与 `stats.<zcode|opencode|workbuddy|qoder>` 内部按字段合并到默认值上；
-- 供应商管理页保存的覆盖（启用状态、名称、控制台链接等）写入插件自己的 `$DSH_HOME/dsh-tokenlens/providers.json`（原子写入、仅本人可读），既不进 profile patch，也不会覆盖 DSH 模型设置；读取优先级为 **管理页覆盖 > profile 配置 > 内置默认**。
+- 供应商管理页保存的覆盖（启用状态、名称、控制台链接、Open Design 的工作区 ID 等）写入插件自己的 `$DSH_HOME/dsh-tokenlens/providers.json`（原子写入、仅本人可读），既不进 profile patch，也不会覆盖 DSH 模型设置；读取优先级为 **管理页覆盖 > profile 配置 > 内置默认**。
 - `enabled: false` 会卸载 Host 半（bridge、Agent 工具与轮询一并停止），适合临时停用插件。
 
 ## 支持的供应商
@@ -280,7 +281,7 @@ dsh plugin --profile <profile> remove dsh-tokenlens
 
 - OpenCode 的额度定义见[官方文档](https://opencode.ai/docs/go/#usage-limits)（5h = 月度额度的 20%、周 = 50%、月 = 100%）；接口只返回百分比，插件也只画百分比。
 - Command Code 的 `/alpha/*` 是官方 CLI 自用的私有计费路由；免费 / 无方案账户返回空窗口（显示 `—`），插件不会用方案目录猜额度。
-- Open Design 的窗口按账户实际返回的时长渲染：Go 同时有 5 小时和 7 天窗口，Plus / Pro / Max 只有 7 天窗口；钱包余额是独立于窗口的 USD 额度，用尽后继续扣钱包。查询要求工作区权限，鉴权失败会明确显示错误而不是 0。
+- Open Design 的窗口按账户实际返回的时长渲染：Go 同时有 5 小时和 7 天窗口，Plus / Pro / Max 只有 7 天窗口；钱包余额是独立于窗口的 USD 额度，用尽后继续扣钱包。查询要求工作区权限，鉴权失败会明确显示错误而不是 0；工作区 ID 与 Control Key 缺任一项时，弹窗会指出缺哪一项并给出「去配置」入口（v1.3.5）。
 - 未配置凭据的供应商 chip 静默隐藏；`zai`、`minimax`、`deepinfra` 属 best-effort 适配（未公开接口，失败时按可重试错误优雅降级）。
 - 各供应商的元数据（`kind` / `label` / `shortLabel` / `baseURL` / `apiKeyRef` / `consoleUrl`）集中在 `lib/providers.mjs` 的 `PROVIDER_DEFAULTS` 与 `ADAPTERS` 中，新增适配器只需在该文件登记并补测试。
 
@@ -392,7 +393,7 @@ Host 半注册 `tokenlens_usage`，参数 `action`（默认 `snapshot`）与可�
 
 ## 验证
 
-- `node --test`：**280 个自动化用例**，覆盖 Host 数据层、供应商适配器、统计折叠、各 harness 读取、插件集成与浏览器端渲染 / 交互。
+- `node --test`：**285 个自动化用例**，覆盖 Host 数据层、供应商适配器、统计折叠、各 harness 读取、插件集成与浏览器端渲染 / 交互。
 - 在真实环境中验证过 **5 个 harness** 的数据源；本机统计与独立的 SQLite 查询、独立的日志解析逐项对账（差额为 0），跨 harness 合并与供应商映射算术自洽。
 - 供应商接口按各官方文档与参考客户端行为验证；未配置凭据时 chip 静默隐藏，接口异常时按可重试错误降级。
 

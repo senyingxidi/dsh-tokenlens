@@ -783,6 +783,87 @@ test('OpenDesign without a workspace id fails with missing-key, never a fabricat
   assert.equal(tested.body.ok, false)
   assert.equal(tested.body.error.code, 'missing-key')
   assert.equal(tested.body.snapshot, null)
+  // The message names the management page so the UI can point at the new input.
+  assert.match(tested.body.error.message, /management page/)
+})
+
+test('the management page can set and clear an Open Design workspace id (v1.3.5)', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'tokenlens-od-ws-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const storeFile = join(dir, 'providers.json')
+  const { captured } = harness(t, {
+    credentials: { resolve: async () => ({ value: 'od_control_test', source: 'env' }) },
+    config: {
+      minRefreshIntervalMs: 0,
+      pollIntervalMs: 0,
+      providerStoreFile: storeFile,
+      providers: { 'open-design': { enabled: true, workspaceId: '', controlKeyRef: 'OPENDESIGN_CONTROL_KEY' } },
+    },
+  })
+  const calls = stubFetch(t, (call, url) =>
+    String(url).includes('/wallet/balance')
+      ? jsonResponse({ billingScopeVersion: 2, workspaceId: 'ws_new', workspaceMemberId: 'member_1', balanceUsd: '1.00' })
+      : jsonResponse({
+          workspaceId: 'ws_new',
+          workspaceMemberId: 'member_1',
+          eligible: true,
+          windows: [
+            {
+              policyId: 'plan-7d',
+              durationSeconds: 604800,
+              usedCredits: '100',
+              remainingCredits: '900',
+              limitCredits: '1000',
+              resetsAt: '2026-11-01T00:00:00.000Z',
+            },
+          ],
+        }),
+  )
+
+  // Only the workspace-scoped adapter advertises the field.
+  const list = await bridge(captured, { action: 'providers' })
+  const openDesign = list.body.providers.find((provider) => provider.providerId === 'open-design')
+  assert.equal(openDesign.workspaceId, '')
+  assert.equal(
+    list.body.providers.filter((provider) => Object.prototype.hasOwnProperty.call(provider, 'workspaceId')).length,
+    1,
+    'no other provider exposes a workspace id',
+  )
+
+  // Saving it persists to the plugin store and the next test read uses it.
+  const saved = await bridge(captured, {
+    action: 'providerUpdate',
+    providerId: 'open-design',
+    update: { workspaceId: '  ws_new  ' },
+  })
+  assert.equal(saved.body.ok, true)
+  assert.equal(saved.body.providers.find((provider) => provider.providerId === 'open-design').workspaceId, 'ws_new')
+  assert.equal(JSON.parse(await readFile(storeFile, 'utf8')).providers['open-design'].workspaceId, 'ws_new')
+
+  const tested = await bridge(captured, { action: 'providerTest', providerId: 'open-design' })
+  assert.equal(tested.body.ok, true)
+  assert.equal(tested.body.snapshot.provider.id, 'open-design')
+  assert.match(String(calls[0].url), /\/workspaces\/ws_new\/billing\/coding-plan-usage$/)
+
+  // A malformed id is refused before it can reach a URL path.
+  const refused = await bridge(captured, {
+    action: 'providerUpdate',
+    providerId: 'open-design',
+    update: { workspaceId: '../other' },
+  })
+  assert.equal(refused.body.ok, false)
+  assert.equal(refused.body.error.code, 'parse')
+  assert.equal(JSON.parse(await readFile(storeFile, 'utf8')).providers['open-design'].workspaceId, 'ws_new')
+
+  // An empty string clears the override (the Host then falls back to its env var).
+  const cleared = await bridge(captured, {
+    action: 'providerUpdate',
+    providerId: 'open-design',
+    update: { workspaceId: '' },
+  })
+  assert.equal(cleared.body.ok, true)
+  assert.equal(cleared.body.providers.find((provider) => provider.providerId === 'open-design').workspaceId, '')
+  assert.equal(JSON.parse(await readFile(storeFile, 'utf8')).providers['open-design'], undefined, 'an empty override is dropped')
 })
 
 test('unknown actions are refused with the legal list', async (t) => {

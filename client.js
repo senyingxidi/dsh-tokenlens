@@ -157,6 +157,7 @@ window.__ModuleLoader__.load({
       title: '词元透镜（dsh-TokenLens）',
       chipHint: '当前模型供应商的套餐用量，点击查看详情',
       chipUnavailable: '用量读取失败',
+      chipNeedsConfig: '待配置',
       chipNoUsage: '暂无用量',
       chipRolling: '5时',
       chipWeekly: '周',
@@ -328,6 +329,12 @@ window.__ModuleLoader__.load({
       presetCollapse: '收起',
       providerConsoleURL: '控制台地址（Console URL）',
       providerConsoleURLPlaceholder: '留空则使用内置默认地址',
+      providerWorkspaceId: '工作区 ID（Workspace ID）',
+      providerWorkspaceIdHint: 'Open Design Cloud 工作区标识；额度查询需要',
+      providerWorkspaceIdPlaceholder: '留空则使用环境变量 OPENDESIGN_WORKSPACE_ID',
+      providerWorkspaceIdTooLong: '工作区 ID 最多 120 个字符',
+      configureProvider: '去配置',
+      errorOpenDesignConfig: 'Open Design 额度查询需要工作区 ID 与 Control Key（不是推理 Key）',
       providerSave: '保存',
       providerSaving: '保存中…',
       providerTest: '测试连接',
@@ -401,6 +408,7 @@ window.__ModuleLoader__.load({
       title: 'dsh-TokenLens',
       chipHint: 'Plan usage for the selected provider — click for details',
       chipUnavailable: 'Usage unavailable',
+      chipNeedsConfig: 'Needs setup',
       chipNoUsage: 'No usage',
       chipRolling: '5h',
       chipWeekly: 'wk',
@@ -572,6 +580,12 @@ window.__ModuleLoader__.load({
       presetExpand: 'Expand',
       presetCollapse: 'Collapse',
       providerConsoleURL: 'Console URL',
+      providerWorkspaceId: 'Workspace ID',
+      providerWorkspaceIdHint: 'The Open Design Cloud workspace identifier the quota query is scoped to',
+      providerWorkspaceIdPlaceholder: 'Empty uses the OPENDESIGN_WORKSPACE_ID environment variable',
+      providerWorkspaceIdTooLong: 'The workspace ID may be at most 120 characters',
+      configureProvider: 'Configure',
+      errorOpenDesignConfig: 'Open Design quota needs a workspace ID and a Control Key (not an inference key)',
       providerConsoleURLPlaceholder: 'Leave empty for the built-in default',
       providerSave: 'Save',
       providerSaving: 'Saving…',
@@ -1083,6 +1097,10 @@ window.__ModuleLoader__.load({
       // how to add that route instead of offering any credential input.
       const wireDshProviderId = (stringOrEmpty(raw.dshProviderId) || '').trim()
       const dshManaged = raw.dshManaged === true && wireDshProviderId !== ''
+      // v1.3.5: workspace-scoped adapters (Open Design) carry the workspace id a
+      // user may set on this page. Absent on every other provider (and on an
+      // older Host), where it normalizes to '' and no field renders.
+      const workspaceId = (stringOrEmpty(raw.workspaceId) || '').trim()
       // v0.16.0: user-declared custom adapters are flagged `custom:true` (and are
       // no longer builtin). The Host currently returns only the display/credential
       // hints, so the optional declaration tail is normalized defensively: a Host
@@ -1114,6 +1132,10 @@ window.__ModuleLoader__.load({
         windows: normalizeCustomWindows(raw.windows),
         dshManaged,
         dshProviderId: dshManaged ? wireDshProviderId : '',
+        // v1.3.5: the Host only sends this field for adapters that use it; its
+        // mere presence is the capability flag that renders the input.
+        workspaceId,
+        supportsWorkspaceId: Object.prototype.hasOwnProperty.call(raw, 'workspaceId'),
       }
     }
 
@@ -2306,6 +2328,7 @@ window.__ModuleLoader__.load({
               update !== null && typeof update === 'object' && Object.prototype.hasOwnProperty.call(update, field)
             const clearedDraft = hasField('consoleUrl')
             const resetNames = !clearedDraft && (hasField('shortLabel') || hasField('label'))
+            const resetWorkspace = hasField('workspaceId')
             const rowTest = { ...current.rowTest }
             delete rowTest[providerId]
             // Adopt the answered list; a Host that omits it must not blank the page.
@@ -2313,17 +2336,26 @@ window.__ModuleLoader__.load({
             let nextDrafts = current.drafts
             if (clearedDraft) {
               nextDrafts = mapWithout(current.drafts, providerId)
-            } else if (resetNames) {
+            } else if (resetNames || resetWorkspace) {
               const draft = current.drafts[providerId]
               const answered = adoptsList
                 ? parsed.providers.find((entry) => entry.providerId === providerId)
                 : undefined
               if (draft !== undefined && draft !== null && typeof draft === 'object') {
-                nextDrafts = mapWith(current.drafts, providerId, {
-                  ...draft,
-                  shortLabel: answered !== undefined ? answered.shortLabel : draft.shortLabel,
-                  label: answered !== undefined ? answered.label : draft.label,
-                })
+                const next = { ...draft }
+                if (resetNames) {
+                  next.shortLabel = answered !== undefined ? answered.shortLabel : draft.shortLabel
+                  next.label = answered !== undefined ? answered.label : draft.label
+                }
+                // v1.3.5: a saved workspace id re-seeds from the answered list,
+                // so a normalized (trimmed) value replaces the raw draft.
+                if (resetWorkspace) {
+                  next.workspaceId =
+                    answered !== undefined && typeof answered.workspaceId === 'string'
+                      ? answered.workspaceId
+                      : draft.workspaceId
+                }
+                nextDrafts = mapWith(current.drafts, providerId, next)
               }
             }
             patchManagement({
@@ -2810,6 +2842,7 @@ window.__ModuleLoader__.load({
         consoleUrl: provider.consoleUrl,
         shortLabel: provider.shortLabel,
         label: provider.label,
+        workspaceId: typeof provider.workspaceId === 'string' ? provider.workspaceId : '',
       }
     }
 
@@ -2830,6 +2863,13 @@ window.__ModuleLoader__.load({
       if (shortLabel !== provider.shortLabel) update.shortLabel = shortLabel
       const label = typeof source.label === 'string' ? source.label.trim() : provider.label
       if (label !== provider.label) update.label = label
+      // v1.3.5: the workspace id of a workspace-scoped adapter; an empty string
+      // clears the override so the Host falls back to its env var.
+      if (provider.supportsWorkspaceId === true) {
+        const wireWorkspaceId = typeof provider.workspaceId === 'string' ? provider.workspaceId : ''
+        const workspaceId = typeof source.workspaceId === 'string' ? source.workspaceId.trim() : wireWorkspaceId
+        if (workspaceId !== wireWorkspaceId) update.workspaceId = workspaceId
+      }
       return update
     }
 
@@ -2852,13 +2892,15 @@ window.__ModuleLoader__.load({
               consoleUrl: provider.consoleUrl,
               shortLabel: provider.shortLabel,
               label: provider.label,
+              workspaceId: typeof provider.workspaceId === 'string' ? provider.workspaceId : '',
             }),
       })
     }
 
-    /** Record one typed editor value (names and the display-only console URL). */
+    /** Record one typed editor value (names, the display-only console URL, the workspace id). */
     function updateProviderDraft(provider, field, value) {
-      if (field !== 'consoleUrl' && field !== 'shortLabel' && field !== 'label') return
+      if (field !== 'consoleUrl' && field !== 'shortLabel' && field !== 'label' && field !== 'workspaceId') return
+      if (field === 'workspaceId' && provider.supportsWorkspaceId !== true) return
       if (provider === null || provider === undefined) return
       const current = store.get().management
       const draft = providerDraftOf(provider, current)
@@ -3201,6 +3243,9 @@ window.__ModuleLoader__.load({
 .dsh-tokenlens-banner{border:1px solid var(--dsw-alias-border-subtle,rgba(127,127,127,.24));border-radius:var(--dsw-radius-sm);padding:8px 10px;display:flex;flex-direction:column;gap:6px;background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.06))}
 .dsh-tokenlens-banner-title{color:var(--dsw-alias-label-error,#d9534f);font-size:var(--dsw-alias-font-size-sm,12px);line-height:1.5;font-weight:600}
 .dsh-tokenlens-banner-detail{color:var(--dsw-alias-label-tertiary);font-size:var(--dsw-alias-font-size-sm,12px);line-height:1.5;overflow-wrap:anywhere}
+.dsh-tokenlens-banner-hint{align-items:center;display:flex;gap:8px;flex-wrap:wrap;color:var(--dsw-alias-label-secondary);font-size:var(--dsw-alias-font-size-sm,12px);line-height:1.5}
+.dsh-tokenlens-banner-hint-text{min-width:0;overflow-wrap:anywhere}
+.dsh-tokenlens-configure-provider{flex:none}
 .dsh-tokenlens-banner-actions{align-items:center;display:flex;gap:8px}
 .dsh-tokenlens-meta{align-items:baseline;gap:8px;display:flex;justify-content:space-between;color:var(--dsw-alias-label-tertiary);font-size:var(--dsw-alias-font-size-sm,12px);line-height:1.5}
 .dsh-tokenlens-stale{color:#d98a1f;white-space:nowrap}
@@ -3507,9 +3552,23 @@ window.__ModuleLoader__.load({
     // The compositor dock chip.
     // ---------------------------------------------------------------------
 
+    /**
+     * Whether this state is a workspace-scoped provider (Open Design) that is
+     * missing its configuration. Such a provider keeps a chip as the only entry
+     * point to the guidance in the dialog (v1.3.5), because 「没有 API Key」 hides
+     * the chip by protocol and would leave the user with no way in.
+     */
+    function needsWorkspaceConfigEntry(state) {
+      if (normalizeSnapshot(state.snapshot) !== null) return false
+      if (state.error === null || typeof state.error !== 'object' || state.error.code !== 'missing-key') return false
+      const rawId = state.providerId !== null ? state.providerId : (state.snapshot?.provider?.id ?? null)
+      return canonicalProviderId(rawId) === 'open-design'
+    }
+
     /** Whether the chip must stay silent for this state. */
     function chipHidden(state) {
-      return isHidden(state.error)
+      if (!isHidden(state.error)) return false
+      return needsWorkspaceConfigEntry(state) !== true
     }
 
     /** Severity of the chip dot: worst window, balance/unknown mapped to normal. */
@@ -3614,25 +3673,30 @@ window.__ModuleLoader__.load({
     /** The chip when the route has failed and there is no data yet. */
     function buildUnavailableChip(state, t, sessionId) {
       const brand = providerBrand(state, null)
+      // A workspace-scoped provider missing its configuration reads as 「待配置」
+      // instead of a read failure: nothing upstream failed, setup is incomplete.
+      const needsConfig = needsWorkspaceConfigEntry(state)
+      const label = needsConfig ? t('chipNeedsConfig') : t('chipUnavailable')
       return h(
         'span',
         { className: 'dsh-tokenlens-anchor', 'data-composer-stat': 'tokenlens' },
         h(
           Tooltip,
-          { label: t('chipUnavailable'), side: 'top' },
+          { label, side: 'top' },
           h(
             'button',
             {
               type: 'button',
               className: 'dsh-tokenlens-chip',
-              title: t('chipUnavailable'),
-              'aria-label': t('chipUnavailable'),
+              title: label,
+              'aria-label': label,
               'aria-haspopup': 'dialog',
+              ...(needsConfig ? { 'data-needs-config': 'true' } : {}),
               onClick: () => openDialog(sessionId),
             },
             h('span', { className: 'dsh-tokenlens-dot', 'data-level': 'warning', 'aria-hidden': true }),
             h('span', { className: 'dsh-tokenlens-brand' }, brand),
-            h('span', { className: 'dsh-tokenlens-metric' }, t('chipUnavailable')),
+            h('span', { className: 'dsh-tokenlens-metric' }, label),
           ),
         ),
       )
@@ -3880,7 +3944,7 @@ window.__ModuleLoader__.load({
     }
 
     /** The error banner, with a retry button unless the Host says it cannot help. */
-    function buildErrorBanner(error, t, onRetry, key) {
+    function buildErrorBanner(error, t, onRetry, key, extraChildren) {
       const localized = describeError(error, t)
       const detail = typeof error?.message === 'string' ? error.message.trim() : ''
       const showDetail = detail !== '' && detail !== localized
@@ -3890,13 +3954,39 @@ window.__ModuleLoader__.load({
           h(Button, { key: 'retry', variant: 'outline', className: 'dsh-tokenlens-retry', onClick: onRetry }, t('retry')),
         )
       }
+      const extras = Array.isArray(extraChildren) ? extraChildren.filter((child) => child !== null && child !== undefined) : []
       return h(
         'div',
         { key: key ?? 'error', className: 'dsh-tokenlens-banner', 'data-kind': 'error', role: 'alert' },
         h('div', { className: 'dsh-tokenlens-banner-title' }, localized),
         showDetail ? h('div', { className: 'dsh-tokenlens-banner-detail' }, detail) : null,
+        extras.length > 0 ? h('div', { className: 'dsh-tokenlens-banner-hint' }, extras) : null,
         actions.length > 0 ? h('div', { className: 'dsh-tokenlens-banner-actions' }, actions) : null,
       )
+    }
+
+    /**
+     * The extra guidance a workspace-scoped provider (Open Design) gets when its
+     * configuration is incomplete: the reason in product terms plus a jump to the
+     * management page, where the workspace id and the Control Key hint live.
+     */
+    function buildWorkspaceConfigHint(state, error, t) {
+      if (error === null || typeof error !== 'object' || error.code !== 'missing-key') return []
+      const rawId = state.providerId !== null ? state.providerId : (state.snapshot?.provider?.id ?? null)
+      if (canonicalProviderId(rawId) !== 'open-design') return []
+      return [
+        h('span', { key: 'text', className: 'dsh-tokenlens-banner-hint-text' }, t('errorOpenDesignConfig')),
+        h(
+          Button,
+          {
+            key: 'configure',
+            variant: 'outline',
+            className: 'dsh-tokenlens-configure-provider',
+            onClick: () => openManagement(),
+          },
+          t('configureProvider'),
+        ),
+      ]
     }
 
     /** The usage "last updated" line plus a stale marker. */
@@ -5121,6 +5211,7 @@ window.__ModuleLoader__.load({
               void requestUsage('refresh')
             },
             'usage-error',
+            buildWorkspaceConfigHint(state, state.error, t),
           ),
         )
       }
@@ -6012,6 +6103,21 @@ window.__ModuleLoader__.load({
           label: t('providerConsoleURL'),
           placeholder: t('providerConsoleURLPlaceholder'),
         }),
+        // v1.3.5: only workspace-scoped adapters (Open Design) ask for a
+        // workspace id; every other provider renders no field at all.
+        provider.supportsWorkspaceId === true
+          ? buildProviderNameField(provider, management, t, {
+              key: 'workspaceId',
+              className: 'dsh-tokenlens-workspaceid-input',
+              dataAttr: 'data-provider-workspaceid',
+              field: 'workspaceId',
+              label: t('providerWorkspaceId'),
+              hint: t('providerWorkspaceIdHint'),
+              placeholder: t('providerWorkspaceIdPlaceholder'),
+              maxLength: 120,
+              tooLongText: t('providerWorkspaceIdTooLong'),
+            })
+          : null,
       ]
       const actions = h(
         'div',

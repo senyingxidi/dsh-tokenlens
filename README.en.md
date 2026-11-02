@@ -107,7 +107,7 @@ Every option is optional. Override the `dsh-tokenlens` row in `$DSH_HOME/profile
 
 Credentials come from DSH itself: providers configured in DSH inherit their `apiKeyEnv`, or you can set environment variables such as `OPENCODE_GO_API_KEY`, `COMMANDCODE_API_KEY` and `DEEPSEEK_API_KEY`.
 
-Open Design (OpenDesign) is the exception: its read-only billing API needs a **workspace ID** plus a **Control Key** (`OPENDESIGN_CONTROL_KEY` or `VELA_CONTROL_KEY`), which is *not* the inference API key from the Cloud API Keys page. Set `providers.open-design.workspaceId` (or `OPENDESIGN_WORKSPACE_ID`) and provide the Control Key through the environment, DSH credentials, or the management page's key field.
+Open Design (OpenDesign) is the exception: its read-only billing API needs a **workspace ID** plus a **Control Key** (`OPENDESIGN_CONTROL_KEY` or `VELA_CONTROL_KEY`), which is *not* the inference API key from the Cloud API Keys page. Set the workspace ID right on the provider management page's Open Design card (v1.3.5, stored in the plugin's own config and kept across restarts), under `providers.open-design.workspaceId`, or via `OPENDESIGN_WORKSPACE_ID`; provide the Control Key through the environment, DSH credentials, or the management page's key field. When either is missing the detail dialog names the missing piece and offers a 「去配置 / Configure」 button instead of a generic missing-key error.
 
 See the [Chinese README](README.md) for the full configuration reference, preview and provider tables.
 
