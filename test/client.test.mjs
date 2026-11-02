@@ -168,6 +168,24 @@ function windowFixture(percent, hoursFromNow, overrides = {}) {
   }
 }
 
+/**
+ * The open-design period estimate (v1.5.0): the Host's local accumulation of
+ * observed weekly windows, since Open Design serves no period-usage endpoint.
+ */
+function designPlanFixture(overrides = {}) {
+  return {
+    periodStart: '2026-11-02T09:53:18.000Z',
+    periodEnd: '2026-12-02T09:53:18.000Z',
+    usedCredits: 180000,
+    estimatedUsd: 18,
+    windows: 2,
+    complete: true,
+    since: '2026-11-02T09:53:18.000Z',
+    limitPerWindow: 150000,
+    ...overrides,
+  }
+}
+
 /** A v2 snapshot for one provider. */
 function snapshotFixture(providerId = 'opencode-go') {
   const now = Date.now()
@@ -1193,6 +1211,68 @@ test('a workspace-scoped provider missing its config keeps a 「待配置」 chi
     assert.ok(button, 'the chip is marked as needing configuration')
     // Every other provider keeps the protocol's silent hiding.
     assert.equal(await settleChip(plugin, 'opencode-go'), null, 'other providers still hide the chip')
+  } finally {
+    plugin.dispose()
+  }
+})
+
+test('open-design shows the accumulated period Design Plan estimate (v1.5.0)', async () => {
+  const plugin = loadPlugin((payload) => {
+    if (payload.action === 'hello') return { ok: true }
+    if (payload.action === 'stats') return { ok: true, stats: statsFixture() }
+    if (payload.action === 'providers') return providersFixture()
+    return {
+      ok: true,
+      snapshot: { ...snapshotFixture(payload.providerId), designPlan: designPlanFixture() },
+    }
+  })
+  try {
+    const tree = await settleDataDialog(plugin, 'open-design')
+    const row = findElement(tree, (element) => element.props?.['data-capacity-designplan'] === 'true')
+    assert.ok(row, 'the period estimate row renders')
+    const text = textOf(tree)
+    assert.match(text, /本期 Design Plan 累计/, 'it is labelled as a period accumulation')
+    assert.match(text, /\$18\.00/, 'the USD estimate is shown')
+    assert.match(text, /≈ 1\.2 个周额度/, 'it is expressed in weekly allowances')
+    assert.match(text, /已覆盖本账期全部窗口/, 'coverage is stated when the period start was observed')
+    // The row carries the "this is an estimate" explanation as its tooltip.
+    assert.match(String(row.props.title), /没有月度用量接口/, 'the tooltip explains the derivation')
+  } finally {
+    plugin.dispose()
+  }
+})
+
+test('a partial period estimate says only the observed windows are counted', async () => {
+  const plugin = loadPlugin((payload) => {
+    if (payload.action === 'hello') return { ok: true }
+    if (payload.action === 'stats') return { ok: true, stats: statsFixture() }
+    if (payload.action === 'providers') return providersFixture()
+    return {
+      ok: true,
+      snapshot: {
+        ...snapshotFixture(payload.providerId),
+        designPlan: designPlanFixture({ complete: false, since: '2026-11-09T09:53:18.000Z', windows: 1 }),
+      },
+    }
+  })
+  try {
+    const tree = await settleDataDialog(plugin, 'open-design')
+    assert.match(textOf(tree), /仅统计已观测的 1 个窗口/)
+  } finally {
+    plugin.dispose()
+  }
+})
+
+test('no other provider renders a period estimate, and an absent field renders no row', async () => {
+  const plugin = loadPlugin()
+  try {
+    // OpenCode's snapshot carries no designPlan field at all.
+    const tree = await settleDataDialog(plugin, 'opencode-go')
+    assert.equal(
+      findElement(tree, (element) => element.props?.['data-capacity-designplan'] === 'true'),
+      undefined,
+      'only open-design reports a period estimate',
+    )
   } finally {
     plugin.dispose()
   }

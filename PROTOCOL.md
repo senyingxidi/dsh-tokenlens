@@ -138,6 +138,48 @@ HTTP 401 there (the console UI itself authenticates with a session cookie), so i
 is only a fallback. The wallet is therefore always read first; the plan endpoint
 must not turn a readable balance into a hard error.
 
+### Design Plan period estimate (v1.5.0, open-design only)
+
+Open Design publishes a **monthly** cap (Go: $120/month = 4 × the $30 weekly
+window) but serves no "used this period" endpoint — not even cookie-free reads
+(`/billing/usage` and `/billing/coding-plan-usage` both answer 401 to a Control
+Key). So `snapshot.designPlan` (v4 wire) is a **local estimate** the Host derives
+by observing the weekly windows it sees:
+
+```jsonc
+"designPlan": {
+  "periodStart": "2026-11-02T09:53:18.000Z",   // billing period (billing/summary)
+  "periodEnd":   "2026-12-02T09:53:18.000Z",
+  "usedCredits": 50025,                         // Σ final+current weekly windows
+  "estimatedUsd": 5.0025,                       // usedCredits / creditsPerUsd
+  "windows": 1,                                 // weekly windows observed
+  "complete": true,                             // earliest window starts at periodStart
+  "since": "2026-11-02T09:53:18.000Z",          // first window actually observed
+  "limitPerWindow": 150000                      // the account's real weekly cap
+}
+```
+
+Rules the Host guarantees:
+
+- **Only the 7-day window is counted.** The 5-hour window measures the same spend
+  (live: both report identical `usedCredits`), so summing them double-counts.
+- Within one window instance (`windowStart`) the stored `usedCredits` only ever
+  grows to the **maximum** observed; a transient smaller read never lowers it.
+- A window that disappears from the upstream payload keeps its last (final) value.
+- `complete` is true only when the earliest observed window starts at
+  `periodStart`. Otherwise earlier windows of the period were never seen and the
+  number is a **lower bound** — the UI must say so.
+- Persisted in `$DSH_HOME/dsh-tokenlens/design-plan-ledger.json` (atomic, 0600,
+  numbers/timestamps only, 6 periods retained). A write failure degrades to an
+  in-memory fold and never fails the usage read.
+- The raw upstream window rows never cross the wire; only the summary above does.
+- `designPlan` is absent on every other provider and on an older Host.
+
+Note the account's real caps may differ from the public pricing table (this
+machine reports 50,000 credits per 5h / 150,000 per 7d = $5 / $15 at
+`creditsPerUsd: 10000`, half of the advertised $10 / $30), so the summary reports
+`limitPerWindow` as returned rather than assuming a published number.
+
 Rules:
 
 - `percent` is clamped to `0..100`; an unknown percentage is `null` (render "—"), never a fake 0.
