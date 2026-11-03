@@ -161,24 +161,63 @@ by observing the weekly windows it sees:
 "designPlan": {
   "periodStart": "2026-11-02T09:53:18.000Z",   // billing period (billing/summary)
   "periodEnd":   "2026-12-02T09:53:18.000Z",
-  "usedCredits": 50025,                         // Σ final+current weekly windows
-  "estimatedUsd": 5.0025,                       // usedCredits / creditsPerUsd
+  "usedCredits": 142090,                        // Σ final+current weekly windows
+  "estimatedUsd": 27.31,                        // v1.6.0: documented list-price cost
+  "creditsUsd": 14.209,                         // the OLD (1x-assuming) conversion
+  "monthlyCapUsd": 120,                         // documented cap for this model mix
+  "multiplier": 0.5,                            // worst documented multiplier seen
+  "capPercent": 22.76,                          // estimatedUsd / monthlyCapUsd
   "windows": 1,                                 // weekly windows observed
   "complete": true,                             // earliest window starts at periodStart
   "since": "2026-11-02T09:53:18.000Z",          // first window actually observed
   "limitPerWindow": 150000,                     // the account's real weekly cap
   "periodLimitCredits": 600000,                 // limitPerWindow * 4
-  "percent": 8.80                               // usedCredits / periodLimitCredits
+  "percent": 23.68                              // usedCredits / periodLimitCredits
 }
 ```
 
+### Why `estimatedUsd` is not `usedCredits / creditsPerUsd` (v1.6.0)
+
+Open Design bills **credits**, but the pricing page states every cap in
+**list-price dollars** and assigns each model a credit-burn **multiplier**:
+
+| model | multiplier | monthly cap it unlocks |
+|---|---|---|
+| DeepSeek V4.1 Flash | 0.5× | $120 (the whole Go cap) |
+| MiMo V2.6 Flash / DeepSeek V4 Pro / GLM-5.3 Flash … | 1× | $60 |
+| Claude Haiku 5.5 / GLM-5.3 Flash-X | 2× | $30 |
+| GPT-6 Luna | 4× | $15 |
+
+So `usedCredits / creditsPerUsd` silently assumes a 1× burn: it reports **half** the
+true list-price value for a 0.5× model and **4× too much** for a 4× model. The
+account's own windows confirm the unit (`50,000` credits per 5h = the documented
+$10, `150,000` per 7d = $30, i.e. 5,000 credits per list-price dollar), which is
+why `creditsPerUsd` is 10,000 — two credits per list-price dollar at 0.5×.
+
+`estimatedUsd` is therefore computed from the tokens actually consumed:
+
+```
+cost = Σ per model ( input×p_in + output×p_out + cacheRead×p_read ) / 1e6
+```
+
+with the prices transcribed from the same page. Verified against one real console
+receipt: input 311 + output 2,610 + cacheRead 258,560 on DeepSeek V4.1 Flash gives
+`$0.0048` list price, ×0.5 multiplier = `$0.0024` charged — exactly what the usage
+table shows. Note the table's "input" column is non-cached + cache, so `input` in
+this formula **excludes** `cacheRead` or the cache bytes would be billed twice.
+
+The cap uses the **highest** multiplier in the mix, not an average: a 4× model
+consumes its share four times faster, so it binds. `creditsUsd` keeps the old
+number on the wire for comparison; a client showing the old figure can migrate
+without a wire break.
+
 `windows.monthly` is then filled from that estimate (v1.5.1), with `resetsAt` taken
 from `periodEnd`, so the existing monthly row and the chip's `月 N%` piece carry it
-without a second UI. The ×4 monthly-to-weekly ratio is the **one documented
-derivation**: the published pricing table states the monthly cap as exactly four
-weekly windows for every tier (Go $120/$30, Plus $160/$40, Pro $360/$90, Max
-$600/$150). A partial estimate still reports a percentage but sets the window
-`status` to `unknown`, so it can never paint a warning/critical dot.
+without a second UI. The ×4 monthly-to-weekly ratio is documented too: the pricing
+table states the monthly cap as exactly four weekly windows for every tier (Go
+$120/$30, Plus $160/$40, Pro $360/$90, Max $600/$150). A partial estimate still
+reports a percentage but sets the window `status` to `unknown`, so it can never
+paint a warning/critical dot.
 
 Rules the Host guarantees:
 

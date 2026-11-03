@@ -38,6 +38,7 @@ import {
   saveProviderStore,
 } from './lib/provider-store.mjs'
 import { makeCustomAdapter, sanitizeUsageBaseURL, validateCustomProvider } from './lib/custom-provider.mjs'
+import { capsForModels, designPlanCostUsd } from './lib/design-plan-cost.mjs'
 import {
   defaultDesignPlanLedgerFile,
   loadLedger,
@@ -83,7 +84,7 @@ export const inject = []
 export const PLUGIN_NAME = 'dsh-tokenlens'
 
 /** Plugin version; mirrors package.json (kept here so diagnostics need no fs read). */
-export const PLUGIN_VERSION = '1.5.3'
+export const PLUGIN_VERSION = '1.6.0'
 
 /** Documented defaults; every field of the raw row config is optional. */
 const DEFAULTS = {
@@ -431,12 +432,64 @@ export function apply(ctx, rawConfig) {
     }
   }
 
-  /** The period estimate for the open-design snapshot, or null. */
-  function designPlanSummaryFor(providerId, designPlan) {
+  /**
+   * The period estimate for the open-design snapshot, or null.
+   *
+   * v1.6.0: the dollar figure is the documented LIST-PRICE value of the tokens
+   * this period consumed, not `usedCredits / creditsPerUsd`. The latter assumes
+   * a 1x burn rate while the documented multipliers range 0.25x–4x, which made
+   * the number incomparable with the published caps (2x too low for DeepSeek
+   * V4.1 Flash, 4x too high for GPT-6 Luna). The token usage comes from the
+   * same local session-log stats the rest of the dialog uses.
+   */
+  async function designPlanSummaryFor(providerId, designPlan) {
     if (canonicalProviderId(providerId) !== 'open-design') return null
     const periodStart = designPlan?.periodStart
     if (typeof periodStart !== 'string' || periodStart === '') return null
-    return summarizeDesignPlan(designPlanLedger, periodStart)
+    const pricing = await designPlanPricing()
+    return summarizeDesignPlan(designPlanLedger, periodStart, pricing)
+  }
+
+  /**
+   * The documented-price context of the current billing period.
+   *
+   * Reads the per-model token buckets for `open-design` from the local stats
+   * (scoped to this period by the day histograms' own totals) and converts them
+   * with the documented list prices, then derives the caps those multipliers
+   * entitle the account to. Every failure degrades to `null`s, never to a throw:
+   * a pricing problem must not hide the credits/balance the Host already has.
+   */
+  async function designPlanPricing() {
+    if (statsService === null) return null
+    let stats = null
+    try {
+      stats = await statsService.get({ fresh: false })
+    } catch {
+      return null
+    }
+    // `last30Days` is the closest wire window to a billing period (this account's
+    // is 2026-11-02 → 12-02) and it carries the per-token-kind split the
+    // documented prices need.
+    const models = Object.create(null)
+    for (const entry of Array.isArray(stats?.models) ? stats.models : []) {
+      if (canonicalProviderId(entry?.providerId) !== 'open-design') continue
+      const modelId = typeof entry.modelId === 'string' ? entry.modelId : ''
+      if (modelId === '') continue
+      const bucket = models[modelId] ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+      bucket.input += typeof entry.last30Days?.input === 'number' ? entry.last30Days.input : 0
+      bucket.output += typeof entry.last30Days?.output === 'number' ? entry.last30Days.output : 0
+      bucket.cacheRead += typeof entry.last30Days?.cacheRead === 'number' ? entry.last30Days.cacheRead : 0
+      bucket.cacheWrite += typeof entry.last30Days?.cacheWrite === 'number' ? entry.last30Days.cacheWrite : 0
+      models[modelId] = bucket
+    }
+    const cost = designPlanCostUsd(models)
+    const caps = capsForModels(Object.keys(models))
+    return {
+      listPriceUsd: cost.priced === true ? cost.usd : null,
+      monthlyCapUsd: caps.monthlyCapUsd,
+      multiplier: caps.multiplier,
+      unpricedModels: cost.unpricedModels,
+    }
   }
 
   /**
@@ -1196,12 +1249,12 @@ export function apply(ctx, rawConfig) {
     return consoleUrl === null ? null : { console: consoleUrl }
   }
 
-  function snapshotFromResult(providerId, read, now) {
+  async function snapshotFromResult(providerId, read, now) {
     // v1.5.0: the Design Plan period estimate. The ledger observes every read
     // (refreshes and background polls), then the current period is summarized
     // into the snapshot so the dialog can show it without a second round-trip.
     recordDesignPlan(read.result.designPlan ?? null, now)
-    const designPlan = designPlanSummaryFor(providerId, read.result.designPlan)
+    const designPlan = await designPlanSummaryFor(providerId, read.result.designPlan)
     return buildSnapshot({
       provider: providerInfo(providerId),
       plan: read.result.plan ?? null,
@@ -1240,7 +1293,7 @@ export function apply(ctx, rawConfig) {
     state.lastAttempts.set(canonicalId, new Date().toISOString())
     try {
       const read = await readProvider(canonicalId, Date.now())
-      const snapshot = snapshotFromResult(canonicalId, read, Date.now())
+      const snapshot = await snapshotFromResult(canonicalId, read, Date.now())
       state.caches.set(canonicalId, { snapshot, fetchedAtMs: read.fetchedAtMs })
       state.lastErrors.delete(canonicalId)
       state.requestCounts.set(canonicalId, (state.requestCounts.get(canonicalId) ?? 0) + 1)

@@ -182,6 +182,10 @@ function designPlanFixture(overrides = {}) {
     complete: true,
     since: '2026-11-02T09:53:18.000Z',
     limitPerWindow: 150000,
+    // v1.6.0 documented-price context: a 0.5x model mix unlocks the full $120.
+    monthlyCapUsd: 120,
+    capPercent: 15,
+    multiplier: 0.5,
     ...overrides,
   }
 }
@@ -1232,11 +1236,13 @@ test('open-design shows the accumulated period Design Plan estimate (v1.5.0)', a
     assert.ok(row, 'the period estimate row renders')
     const text = textOf(tree)
     assert.match(text, /本期 Design Plan 累计/, 'it is labelled as a period accumulation')
-    assert.match(text, /\$18\.00/, 'the USD estimate is shown')
-    assert.match(text, /≈ 1\.2 个周额度/, 'it is expressed in weekly allowances')
+    // v1.6.0: usage against the documented cap, not a bare number.
+    assert.match(text, /\$18\.00 \/ \$120\.00/, 'usage is shown against the documented cap')
+    assert.match(text, /15%/, 'the share of the documented cap is shown')
+    assert.match(text, /按 0\.5× 倍率模型计价/, 'the multiplier that set the cap is named')
     assert.match(text, /已覆盖本账期全部窗口/, 'coverage is stated when the period start was observed')
-    // The row carries the "this is an estimate" explanation as its tooltip.
-    assert.match(String(row.props.title), /没有月度用量接口/, 'the tooltip explains the derivation')
+    // The row carries the "priced from the official rates" explanation as its tooltip.
+    assert.match(String(row.props.title), /官方定价表的模型单价/, 'the tooltip explains the pricing')
   } finally {
     plugin.dispose()
   }

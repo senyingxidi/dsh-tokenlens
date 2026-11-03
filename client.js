@@ -341,8 +341,8 @@ window.__ModuleLoader__.load({
       errorOpenDesignConfig: 'Open Design 额度查询需要工作区 ID 与 Control Key（不是推理 Key）',
       designPlanLabel: '本期 Design Plan 累计',
       designPlanHint:
-        'Open Design 没有月度用量接口，此值由插件在本机累加观测到的 7 天窗口得出，仅供参考；未观测到的窗口不会计入',
-      designPlanWindowsOf: '≈ {count} 个周额度',
+        '按官方定价表的模型单价换算本机实际消耗的 Token（不是 usedCredits ÷ 汇率）。Open Design 没有月度用量接口，此值由插件在本机累计观测到的 7 天窗口得出，仅供参考',
+      designPlanMultiplier: '按 {multiplier}× 倍率模型计价',
       designPlanComplete: '已覆盖本账期全部窗口',
       designPlanPartial: '仅统计已观测的 {count} 个窗口',
       providerSave: '保存',
@@ -601,10 +601,10 @@ window.__ModuleLoader__.load({
       providerControlKeySaved: 'Saved; paste again to replace it',
       configureProvider: 'Configure',
       errorOpenDesignConfig: 'Open Design quota needs a workspace ID and a Control Key (not an inference key)',
-      designPlanLabel: 'Period Design Plan (estimate)',
+      designPlanLabel: 'Period Design Plan',
       designPlanHint:
-        'Open Design serves no period-usage endpoint: this value accumulates the 7-day windows observed on this machine. Windows observed while the plugin was not running are not counted.',
-      designPlanWindowsOf: '≈ {count} weekly allowances',
+        'Priced from the official per-model rates over the tokens this machine actually consumed (not usedCredits ÷ rate). Open Design serves no period-usage endpoint, so the window total is accumulated locally; treat it as an estimate.',
+      designPlanMultiplier: 'priced at the {multiplier}× model rate',
       designPlanComplete: 'covers every window of this period',
       designPlanPartial: 'only {count} observed window(s)',
       providerConsoleURLPlaceholder: 'Leave empty for the built-in default',
@@ -1090,6 +1090,11 @@ window.__ModuleLoader__.load({
       const windows = Number.isFinite(raw.windows) && raw.windows > 0 ? Math.round(raw.windows) : 0
       const estimatedUsd = numberOrNull(raw.estimatedUsd)
       const limitPerWindow = numberOrNull(raw.limitPerWindow)
+      // v1.6.0 documented-price context: the cap the model mix entitles and the
+      // share of it consumed. Both are optional (an older Host omits them).
+      const monthlyCapUsd = numberOrNull(raw.monthlyCapUsd)
+      const capPercent = numberOrNull(raw.capPercent)
+      const multiplier = numberOrNull(raw.multiplier)
       return {
         periodStart: stringOrEmpty(raw.periodStart),
         periodEnd: stringOrEmpty(raw.periodEnd),
@@ -1099,6 +1104,9 @@ window.__ModuleLoader__.load({
         complete: raw.complete === true,
         since: stringOrEmpty(raw.since),
         limitPerWindow: limitPerWindow !== null && limitPerWindow > 0 ? limitPerWindow : null,
+        monthlyCapUsd: monthlyCapUsd !== null && monthlyCapUsd > 0 ? monthlyCapUsd : null,
+        capPercent,
+        multiplier: multiplier !== null && multiplier > 0 ? multiplier : null,
       }
     }
 
@@ -4018,25 +4026,38 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * The open-design period estimate row (v1.5.0).
+     * The open-design period estimate row (v1.5.0, priced in v1.6.0).
      *
      * Open Design has no period-usage endpoint, so this is the Host's local
-     * accumulation of the weekly windows it observed. It is labelled as an
-     * estimate and carries a coverage note: when the first observed window does
-     * not start at the billing period start, earlier windows were never seen and
-     * the value is a lower bound.
+     * accumulation of the observed windows. The dollar figure is the DOCUMENTED
+     * LIST-PRICE value of the tokens consumed this period, which makes it
+     * comparable with the published caps — that is what "can I use $120?" turns
+     * on. The denominator is the cap those model multipliers entitle the account
+     * to (0.5x models unlock the full $120; 1x unlocks $60).
      */
     function buildDesignPlanRow(designPlan, t) {
       if (designPlan === null) return null
       const parts = []
-      if (designPlan.estimatedUsd !== null) {
+      const hasUsd = designPlan.estimatedUsd !== null
+      if (hasUsd) {
+        // "$27.31 / $120" — the numerator is documented list-price usage, the
+        // denominator the documented cap for this model mix.
+        const value =
+          designPlan.monthlyCapUsd !== null
+            ? `${formatMoney(designPlan.estimatedUsd, 'USD')} / ${formatMoney(designPlan.monthlyCapUsd, 'USD')}`
+            : formatMoney(designPlan.estimatedUsd, 'USD')
         parts.push(
-          h(
-            'span',
-            { key: 'usd', className: 'dsh-tokenlens-percent dsh-tokenlens-capacity-money' },
-            formatMoney(designPlan.estimatedUsd, 'USD'),
-          ),
+          h('span', { key: 'usd', className: 'dsh-tokenlens-percent dsh-tokenlens-capacity-money' }, value),
         )
+        if (designPlan.capPercent !== null) {
+          parts.push(
+            h(
+              'span',
+              { key: 'cap', className: 'dsh-tokenlens-percent', 'data-level': levelOf(designPlan.capPercent, 'ok') },
+              formatPercent(designPlan.capPercent, t),
+            ),
+          )
+        }
       } else {
         parts.push(
           h(
@@ -4047,9 +4068,10 @@ window.__ModuleLoader__.load({
         )
       }
       const notes = []
-      if (designPlan.limitPerWindow !== null && designPlan.usedCredits > 0) {
-        const ratio = designPlan.usedCredits / designPlan.limitPerWindow
-        notes.push(t('designPlanWindowsOf', { count: ratio.toFixed(1) }))
+      // Say WHICH multiplier set the cap, since that is why the ceiling is not
+      // always $120 (the pricing table: 0.5x→$120, 1x→$60, 2x→$30, 4x→$15).
+      if (designPlan.multiplier !== null) {
+        notes.push(t('designPlanMultiplier', { multiplier: designPlan.multiplier }))
       }
       if (designPlan.complete === true) notes.push(t('designPlanComplete'))
       else if (designPlan.windows > 0) notes.push(t('designPlanPartial', { count: designPlan.windows }))
