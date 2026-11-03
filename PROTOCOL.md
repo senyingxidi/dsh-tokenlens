@@ -113,17 +113,27 @@ A `windows` snapshot may also carry a non-null `balance` (Open Design reports
 allowance windows and a wallet independently); the Client renders it as one extra
 row at the end of the capacity card and appends the amount to the chip tooltip.
 
-`open-design` needs two credentials that the API-keys page does not provide: a
-**workspace id** (the console URL's `?workspaceId=` value) and a **Control Key**
-(the `profiles.prod.controlKey` the desktop app / `vela login` writes to
-`~/.amr/config.json`). The inference key from the Cloud API Keys page answers
-HTTP 401 on the billing endpoints. Missing either value is a `missing-key` error.
-Since v1.3.9 both may be entered on the management page: `workspaceId` is
-persisted in `providers.json`, and the Control Key is written through the same
-`apiKey` override field the store already supported (write-only — the Host never
-returns it, only `hasKey`/`keySource`). The environment/credential sources
-(`OPENDESIGN_CONTROL_KEY`, `VELA_CONTROL_KEY`, `OPENDESIGN_WORKSPACE_ID`) still
-work and the page override wins.
+`open-design` needs a **Control Key** (the `profiles.prod.controlKey` the desktop
+app / `vela login` writes to `~/.amr/config.json`). The inference key from the
+Cloud API Keys page answers HTTP 401 on the billing endpoints, so it cannot be
+used here. A missing Control Key is a `missing-key` error.
+
+**The workspace id is optional (v1.5.3).** A Control Key identifies the workspace
+it belongs to, so the plugin discovers it:
+
+1. `GET /api/v1/workspaces/current` — the key's active workspace
+   (`workspaceId`, else `activeWorkspaceId`); this is the normal path.
+2. `GET /api/v1/workspaces` — fallback: accepted only when exactly one workspace
+   is visible. Several visible workspaces with none marked active is a
+   `missing-key` error rather than a guess, because picking the wrong one would
+   report another team's usage as this account's.
+
+A configured id always wins over discovery (management page → 工作区 ID, persisted
+in `providers.json`; or `OPENDESIGN_WORKSPACE_ID`), which is how a multi-workspace
+account selects one. The Control Key is written through the same `apiKey` override
+field the store already supported (write-only — the Host never returns it, only
+`hasKey`/`keySource`). `OPENDESIGN_CONTROL_KEY` / `VELA_CONTROL_KEY` are still
+honoured and the page override wins.
 
 Reads, in independent layers (v1.4.0) — each may fail without voiding the others:
 

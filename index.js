@@ -83,7 +83,7 @@ export const inject = []
 export const PLUGIN_NAME = 'dsh-tokenlens'
 
 /** Plugin version; mirrors package.json (kept here so diagnostics need no fs read). */
-export const PLUGIN_VERSION = '1.5.2'
+export const PLUGIN_VERSION = '1.5.3'
 
 /** Documented defaults; every field of the raw row config is optional. */
 const DEFAULTS = {
@@ -1097,6 +1097,10 @@ export function apply(ctx, rawConfig) {
       provider = { ...provider, accessKeyId: accessValue, secretAccessKey: secretValue }
       keyInfo = { ref: accessRef, source: access.source, detail: access.detail }
     } else if (adapterId === 'open-design') {
+      // v1.5.3: the workspace id is OPTIONAL. A Control Key identifies its own
+      // active workspace, so the adapter discovers it when none is configured;
+      // an explicit value (management page / config / env) always wins for
+      // accounts with several workspaces.
       const workspaceId =
         String(provider.workspaceId ?? '').trim() || String(process.env.OPENDESIGN_WORKSPACE_ID ?? '').trim()
       const refs = []
@@ -1125,14 +1129,6 @@ export function apply(ctx, rawConfig) {
           break
         }
       }
-      if (workspaceId === '') {
-        throw new UsageError(
-          'missing-key',
-          'OpenDesign quota needs a workspace id: set it on the plugin management page (open-design → 工作区 ID), ' +
-            'in providers.open-design.workspaceId, or in OPENDESIGN_WORKSPACE_ID',
-          { retryable: false },
-        )
-      }
       if (controlKey === '') {
         throw new UsageError(
           'missing-key',
@@ -1140,6 +1136,7 @@ export function apply(ctx, rawConfig) {
           { retryable: false },
         )
       }
+      // An empty workspaceId is fine: the adapter resolves it from the key.
       provider = { ...provider, workspaceId, controlKey }
       keyInfo = { ref: controlRef, source: controlSource, detail: controlDetail }
     } else if (typeof provider.apiKeyRef === 'string' && provider.apiKeyRef.trim() !== '') {

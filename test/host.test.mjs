@@ -850,7 +850,7 @@ test('OpenDesign tolerates a missing billing summary', async (t) => {
   assert.equal(tested.body.snapshot.plan, null, 'no tier is invented without a summary')
 })
 
-test('OpenDesign without a workspace id fails with missing-key, never a fabricated window', async (t) => {
+test('OpenDesign discovers its workspace from the Control Key alone (v1.5.3)', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'tokenlens-od-noid-'))
   t.after(() => rm(dir, { recursive: true, force: true }))
   const previous = process.env.OPENDESIGN_WORKSPACE_ID
@@ -865,16 +865,79 @@ test('OpenDesign without a workspace id fails with missing-key, never a fabricat
       minRefreshIntervalMs: 0,
       pollIntervalMs: 0,
       providerStoreFile: join(dir, 'providers.json'),
+      designPlanLedgerFile: join(dir, 'design-plan-ledger.json'),
       providers: { 'open-design': { enabled: true, workspaceId: '', controlKeyRef: 'OPENDESIGN_CONTROL_KEY' } },
     },
   })
-  stubFetch(t, () => jsonResponse({ workspaceId: 'ws_test', eligible: true, windows: [] }))
+  // The user configured NO workspace id; the key alone identifies ws_auto.
+  const calls = stubFetch(t, (call, url) => {
+    const text = String(url)
+    if (text.endsWith('/api/v1/workspaces/current')) {
+      return jsonResponse({ workspaceId: 'ws_auto', workspaceName: 'demo', activeWorkspaceId: 'ws_auto' })
+    }
+    if (text.includes('/wallet/balance')) {
+      return jsonResponse({ billingScopeVersion: 2, workspaceId: 'ws_auto', workspaceMemberId: 'm', balanceUsd: '1.00' })
+    }
+    if (text.includes('/billing/summary')) return jsonResponse({ membershipTier: 'go' })
+    return jsonResponse({
+      workspaceId: 'ws_auto',
+      workspaceMemberId: 'm',
+      eligible: true,
+      windows: [
+        {
+          policyId: 'p',
+          durationSeconds: 604800,
+          usedCredits: '1000',
+          limitCredits: '150000',
+          remainingCredits: '149000',
+          windowStart: '2026-11-02T09:53:18.000Z',
+          resetsAt: '2026-11-09T09:53:18.000Z',
+        },
+      ],
+    })
+  })
+
+  const tested = await bridge(captured, { action: 'providerTest', providerId: 'open-design' })
+  assert.equal(tested.body.ok, true, 'a Control Key alone is enough to configure Open Design')
+  assert.equal(tested.body.snapshot.balance.amount, 1)
+  assert.ok(
+    calls.some((call) => String(call.url).endsWith('/api/v1/workspaces/current')),
+    'the workspace was discovered, not demanded',
+  )
+  assert.ok(
+    calls.some((call) => String(call.url).includes('/workspaces/ws_auto/wallet/balance')),
+    'the discovered workspace scopes every billing read',
+  )
+})
+
+test('OpenDesign refuses to guess between several visible workspaces (v1.5.3)', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'tokenlens-od-multiws-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const { captured } = harness(t, {
+    credentials: okCredentials,
+    config: {
+      minRefreshIntervalMs: 0,
+      pollIntervalMs: 0,
+      providerStoreFile: join(dir, 'providers.json'),
+      providers: { 'open-design': { enabled: true, workspaceId: '', controlKeyRef: 'OPENDESIGN_CONTROL_KEY' } },
+    },
+  })
+  stubFetch(t, (call, url) => {
+    const text = String(url)
+    // No "active" workspace, and two candidates: picking one would report
+    // another team's usage as this account's.
+    if (text.endsWith('/api/v1/workspaces/current')) return jsonResponse({}, 404)
+    if (text.endsWith('/api/v1/workspaces')) {
+      return jsonResponse({ items: [{ workspaceId: 'ws_a' }, { workspaceId: 'ws_b' }] })
+    }
+    return jsonResponse({ workspaceId: 'ws_a', eligible: true, windows: [] })
+  })
   const tested = await bridge(captured, { action: 'providerTest', providerId: 'open-design' })
   assert.equal(tested.body.ok, false)
   assert.equal(tested.body.error.code, 'missing-key')
-  assert.equal(tested.body.snapshot, null)
-  // The message names the management page so the UI can point at the new input.
-  assert.match(tested.body.error.message, /management page/)
+  assert.match(tested.body.error.message, /2 workspaces/)
+  // The guidance must name the manual override, since this is the case that needs it.
+  assert.match(tested.body.error.message, /工作区 ID|management page/i)
 })
 
 test('the management page can set and clear an Open Design workspace id (v1.3.5)', async (t) => {
