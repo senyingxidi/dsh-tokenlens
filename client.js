@@ -343,6 +343,7 @@ window.__ModuleLoader__.load({
       designPlanHint:
         '按官方定价表的模型单价换算本机实际消耗的 Token（不是 usedCredits ÷ 汇率）。Open Design 没有月度用量接口，此值由插件在本机累计观测到的 7 天窗口得出，仅供参考',
       designPlanMultiplier: '按 {multiplier}× 倍率模型计价',
+      designPlanPartialPricing: '含未收录价格的模型，金额为下限',
       designPlanComplete: '已覆盖本账期全部窗口',
       designPlanPartial: '仅统计已观测的 {count} 个窗口',
       providerSave: '保存',
@@ -605,6 +606,7 @@ window.__ModuleLoader__.load({
       designPlanHint:
         'Priced from the official per-model rates over the tokens this machine actually consumed (not usedCredits ÷ rate). Open Design serves no period-usage endpoint, so the window total is accumulated locally; treat it as an estimate.',
       designPlanMultiplier: 'priced at the {multiplier}× model rate',
+      designPlanPartialPricing: 'includes models with no documented price; the amount is a lower bound',
       designPlanComplete: 'covers every window of this period',
       designPlanPartial: 'only {count} observed window(s)',
       providerConsoleURLPlaceholder: 'Leave empty for the built-in default',
@@ -1107,6 +1109,9 @@ window.__ModuleLoader__.load({
         monthlyCapUsd: monthlyCapUsd !== null && monthlyCapUsd > 0 ? monthlyCapUsd : null,
         capPercent,
         multiplier: multiplier !== null && multiplier > 0 ? multiplier : null,
+        // v1.6.2: some consumed model had no documented price, so the dollar
+        // figure is a lower bound and must not read as complete.
+        partial: raw.partial === true,
       }
     }
 
@@ -4073,6 +4078,9 @@ window.__ModuleLoader__.load({
       if (designPlan.multiplier !== null) {
         notes.push(t('designPlanMultiplier', { multiplier: designPlan.multiplier }))
       }
+      // v1.6.2: a model without a documented price makes the figure a lower bound.
+      // Say it rather than letting the number read as complete.
+      if (designPlan.partial === true) notes.push(t('designPlanPartialPricing'))
       if (designPlan.complete === true) notes.push(t('designPlanComplete'))
       else if (designPlan.windows > 0) notes.push(t('designPlanPartial', { count: designPlan.windows }))
       return h(

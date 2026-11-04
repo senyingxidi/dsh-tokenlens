@@ -84,7 +84,7 @@ export const inject = []
 export const PLUGIN_NAME = 'dsh-tokenlens'
 
 /** Plugin version; mirrors package.json (kept here so diagnostics need no fs read). */
-export const PLUGIN_VERSION = '1.6.0'
+export const PLUGIN_VERSION = '1.6.2'
 
 /** Documented defaults; every field of the raw row config is optional. */
 const DEFAULTS = {
@@ -483,12 +483,16 @@ export function apply(ctx, rawConfig) {
       models[modelId] = bucket
     }
     const cost = designPlanCostUsd(models)
-    const caps = capsForModels(Object.keys(models))
+    // v1.6.1: weight the cap by actual per-model consumption, not the worst
+    // multiplier. The caps are credit-denominated, so a mostly-0.5x account that
+    // touched a 4x model once keeps nearly the full $120.
+    const caps = capsForModels(Object.keys(models), cost.mixes)
     return {
       listPriceUsd: cost.priced === true ? cost.usd : null,
       monthlyCapUsd: caps.monthlyCapUsd,
       multiplier: caps.multiplier,
       unpricedModels: cost.unpricedModels,
+      partial: cost.unpricedModels.length > 0,
     }
   }
 

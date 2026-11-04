@@ -34,12 +34,82 @@ test('the documented cap ladder matches the pricing table for every multiplier',
   assert.equal(capsForModels(['gpt-6-luna']).monthlyCapUsd, 15, '4x -> $15')
 })
 
-test('a mixed history is capped by the WORST multiplier used, not an average', () => {
-  // Every unit of a 4x model consumes its share four times faster, so the binding
-  // ceiling is the highest multiplier, never the mean.
+test('without a consumption split the cap falls back to the highest multiplier', () => {
+  // Docs-only callers (no per-model spend) get the conservative reading: the
+  // least remaining capacity. The Host passes a real split instead (next test).
   const caps = capsForModels(['deepseek-v4.1-flash', 'gpt-6-luna'])
   assert.equal(caps.multiplier, 4)
   assert.equal(caps.monthlyCapUsd, 15)
+})
+
+test('a mixed history is weighted by actual consumption, not the worst multiplier (v1.6.1)', () => {
+  // The caps are credit-denominated, so spendable value is 600,000 / m_effective
+  // where m_effective is the credit-weighted harmonic mean. Using the plain max
+  // made a mostly-0.5x account that touched a 4x model once report $15 instead
+  // of nearly $120.
+  // Half the credits at 0.5x ($10 list) and half at 4x ($1.25 list):
+  //   m_eff = 100000 / (50000/0.5 + 5000/4) = 0.8889 -> $67.50
+  const half = capsForModels(null, [
+    { listUsd: 10, multiplier: 0.5 },
+    { listUsd: 1.25, multiplier: 4 },
+  ])
+  assert.ok(Math.abs(half.multiplier - 0.888888) < 1e-5, `m_eff was ${half.multiplier}`)
+  assert.ok(Math.abs(half.monthlyCapUsd - 67.5) < 1e-6, `cap was ${half.monthlyCapUsd}`)
+
+  // 90% of credits on 0.5x, 10% on 4x stays near the full cap.
+  const mostly = capsForModels(null, [
+    { listUsd: 45, multiplier: 0.5 },
+    { listUsd: 1.5, multiplier: 4 },
+  ])
+  assert.ok(Math.abs(mostly.monthlyCapUsd - 97.89) < 0.01, `cap was ${mostly.monthlyCapUsd}`)
+  assert.ok(mostly.monthlyCapUsd > 90, 'one 4x request must not collapse the cap to $15')
+})
+
+test('a single-model mix reduces exactly to that model documented cap', () => {
+  // The weighting must not perturb the pure cases, which the pricing page states.
+  for (const [id, cap] of [
+    ['deepseek-v4.1-flash', 120],
+    ['mimo-v2.6-flash', 60],
+    ['claude-haiku-5.5', 30],
+    ['gpt-6-luna', 15],
+  ]) {
+    const model = designPlanModel(id)
+    const weighted = capsForModels(null, [{ listUsd: 10, multiplier: model.multiplier }])
+    assert.equal(weighted.monthlyCapUsd, cap, `${id} weighted cap`)
+    assert.equal(capsForModels([id]).monthlyCapUsd, cap, `${id} unweighted cap`)
+  }
+})
+
+test('switching models moves the price AND the cap, so "used%" is not comparable', () => {
+  // Same token volume, different model. The dollar figure follows the model's
+  // price; the cap follows its multiplier. That is why a switch changes the
+  // reported "累计金额" even though the token count did not move.
+  const tokens = { input: 1e6, output: 1e6, cacheRead: 1e9, cacheWrite: 0 }
+
+  const flash = modelCostUsd('deepseek-v4.1-flash', tokens).usd
+  const pro = modelCostUsd('deepseek-v4-pro', tokens).usd
+  assert.ok(pro > flash, 'a pricier model must report a larger amount for the same tokens')
+  // V4 Pro input 1.32 / output 3.96 / cacheRead 0.044 vs Flash 0.3 / 1.2 / 0.006
+  const expectedRatio = (1.32 + 3.96 + 44) / (0.3 + 1.2 + 6)
+  assert.ok(Math.abs(pro / flash - expectedRatio) < 1e-9, `ratio was ${pro / flash}`)
+
+  // And the cap moves the other way: 0.5x -> $120, 1x -> $60.
+  assert.equal(capsForModels(['deepseek-v4.1-flash']).monthlyCapUsd, 120)
+  assert.equal(capsForModels(['deepseek-v4-pro']).monthlyCapUsd, 60)
+})
+
+test('an unpriced model makes the amount a lower bound, never a silent zero', () => {
+  // glm-5.3-flash-x is documented at 2x but absent from the public price list, so
+  // its prices are known here; a genuinely unknown id must not vanish silently.
+  const result = designPlanCostUsd({
+    'deepseek-v4.1-flash': { input: 1e6, output: 0, cacheRead: 0, cacheWrite: 0 },
+    'a-model-we-do-not-know': { input: 1e9, output: 0, cacheRead: 0, cacheWrite: 0 },
+  })
+  assert.equal(result.priced, true)
+  assert.deepEqual(result.unpricedModels, ['a-model-we-do-not-know'])
+  // The known model still contributes; the unknown one is excluded, so the total
+  // is a floor (the Host exposes `partial: true` for it).
+  assert.ok(Math.abs(result.usd - 0.3) < 1e-9)
 })
 
 test('an unknown model never invents a multiplier or a cap', () => {
