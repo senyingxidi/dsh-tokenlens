@@ -84,6 +84,33 @@ test('loadLedger tolerates a missing, malformed or foreign-version file', async 
   assert.deepEqual(loadLedger(malformed), emptyLedger())
 })
 
+test('the Design Plan figure comes from server credits, excluding wallet-paid usage (v1.6.4)', () => {
+  // Wallet-funded calls never touch `usedCredits`; they debit `balanceUsd`
+  // instead. Deriving the dollar figure from credits is therefore what keeps the
+  // display Design-Plan-only. The locally priced token total includes wallet
+  // calls, so it can exceed this figure and is reported separately.
+  const { ledger } = fold(emptyLedger(), [weekly(W1, 149932)])
+  const summary = summarizeDesignPlan(ledger, PERIOD_START, {
+    // A local token estimate that includes wallet-paid usage: deliberately higher.
+    listPriceUsd: 40,
+    monthlyCapUsd: 120,
+    multiplier: 0.5,
+  })
+  // 149,932 credits / 10,000 = $14.9932 credit value; / 0.5x = $29.99 list price.
+  assert.ok(Math.abs(summary.estimatedUsd - 29.9864) < 0.01, `estimatedUsd was ${summary.estimatedUsd}`)
+  assert.equal(summary.localPricedUsd, 40, 'the wallet-inclusive estimate is kept separately')
+  assert.ok(summary.estimatedUsd < summary.localPricedUsd, 'Design Plan figure excludes wallet usage')
+  // Cross-check against the documented 7-day cap: 30 * (149,932 / 150,000) = $29.99.
+  assert.ok(Math.abs(30 * (149932 / 150000) - summary.estimatedUsd) < 0.01)
+})
+
+test('without a known multiplier the Design Plan figure falls back to the credit value', () => {
+  const { ledger } = fold(emptyLedger(), [weekly(W1, 150000)])
+  const noMultiplier = summarizeDesignPlan(ledger, PERIOD_START)
+  assert.equal(noMultiplier.estimatedUsd, 15, '150,000 credits at 10,000/USD')
+  assert.equal(noMultiplier.multiplier, null)
+})
+
 test('the period percentage divides by four weekly windows (the published monthly cap)', () => {
   // The pricing table states the monthly cap as exactly 4 × the weekly window for
   // every tier (Go $120 vs $30, Plus $160 vs $40, Pro $360 vs $90, Max $600 vs $150).

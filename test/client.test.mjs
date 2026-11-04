@@ -5263,6 +5263,46 @@ function tokenCardsOfTree(tree) {
   return findAll(tree, (element) => element.props?.className === 'dsh-tokenlens-card').map((card) => textOf(card))
 }
 
+/** The chart x-axis labels (their inline position style), in order. */
+function chartXLabelsOf(tree) {
+  return findAll(tree, (element) => element.props?.className === 'dsh-tokenlens-chart-x-label')
+}
+
+test('a short chart centres each date label under its own bar (v1.6.3)', async () => {
+  // Reported: with only 3 days of data the dates drifted off their columns,
+  // because the first label was pinned to the plot's left edge and the last to
+  // its right edge while the bars are centred inside equal flex cells.
+  const days = ['2026-11-02', '2026-11-03', '2026-11-04']
+  const daily = days.map((day, index) => dailyEntry(day, index * 10))
+  const stats = statsFixture({ daily, providers: [{ providerId: 'opencode-go', label: 'OpenCode', bucket: bucket({ total: 1 }) }] })
+  const plugin = loadPlugin((payload) => {
+    if (payload.action === 'hello') return { ok: true }
+    if (payload.action === 'providers') return providersFixture()
+    if (payload.action === 'stats') return { ok: true, stats }
+    return { ok: true, snapshot: snapshotFixture(payload.providerId) }
+  })
+  try {
+    const tree = await settleDialog(plugin, 'opencode-go')
+    const labels = chartXLabelsOf(tree)
+    assert.equal(labels.length, 3, 'one date label per bar')
+    // 3 bars -> centres at 16.67%, 50%, 83.33% of the plot width.
+    labels.forEach((label, index) => {
+      const left = parseFloat(String(label.props.style?.left))
+      const expected = ((index + 0.5) / 3) * 100
+      assert.ok(
+        Math.abs(left - expected) < 1e-9,
+        `label ${index} must sit under its bar centre: got ${left}%, expected ${expected}%`,
+      )
+      assert.equal(label.props.style?.transform, 'translateX(-50%)', 'centred on the bar')
+    })
+    // The regression specifically: the first label is NOT pinned to 0%.
+    assert.ok(parseFloat(String(labels[0].props.style?.left)) > 10, 'the first label is not glued to the left edge')
+    assert.ok(parseFloat(String(labels[2].props.style?.left)) < 90, 'the last label is not glued to the right edge')
+  } finally {
+    plugin.dispose()
+  }
+})
+
 test('the token section defaults to 图表 mode and 数据 still renders the cards', async () => {
   const days = dayList(45)
   const daily = days.map((day, index) => dailyEntry(day, index))

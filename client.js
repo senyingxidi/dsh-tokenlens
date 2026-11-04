@@ -343,6 +343,7 @@ window.__ModuleLoader__.load({
       designPlanHint:
         '按官方定价表的模型单价换算本机实际消耗的 Token（不是 usedCredits ÷ 汇率）。Open Design 没有月度用量接口，此值由插件在本机累计观测到的 7 天窗口得出，仅供参考',
       designPlanMultiplier: '按 {multiplier}× 倍率模型计价',
+      designPlanWalletShare: '另有 {amount} 由账户余额支付，未计入',
       designPlanPartialPricing: '含未收录价格的模型，金额为下限',
       designPlanComplete: '已覆盖本账期全部窗口',
       designPlanPartial: '仅统计已观测的 {count} 个窗口',
@@ -606,6 +607,7 @@ window.__ModuleLoader__.load({
       designPlanHint:
         'Priced from the official per-model rates over the tokens this machine actually consumed (not usedCredits ÷ rate). Open Design serves no period-usage endpoint, so the window total is accumulated locally; treat it as an estimate.',
       designPlanMultiplier: 'priced at the {multiplier}× model rate',
+      designPlanWalletShare: 'a further {amount} was paid from the balance and is not counted',
       designPlanPartialPricing: 'includes models with no documented price; the amount is a lower bound',
       designPlanComplete: 'covers every window of this period',
       designPlanPartial: 'only {count} observed window(s)',
@@ -1109,6 +1111,9 @@ window.__ModuleLoader__.load({
         monthlyCapUsd: monthlyCapUsd !== null && monthlyCapUsd > 0 ? monthlyCapUsd : null,
         capPercent,
         multiplier: multiplier !== null && multiplier > 0 ? multiplier : null,
+        // v1.6.4: the wallet-inclusive local token estimate, shown only as context
+        // next to the Design-Plan-only figure (they differ by wallet-paid calls).
+        localPricedUsd: numberOrNull(raw.localPricedUsd),
         // v1.6.2: some consumed model had no documented price, so the dollar
         // figure is a lower bound and must not read as complete.
         partial: raw.partial === true,
@@ -3456,7 +3461,7 @@ window.__ModuleLoader__.load({
 .dsh-tokenlens-chart-bar-wrap[data-chart-hover=true] .dsh-tokenlens-chart-bar{background:#40c877;filter:brightness(1.12);box-shadow:0 0 0 1px rgba(64,200,119,.55)}
 .dsh-tokenlens-chart-crosshair{position:absolute;top:2px;height:160px;z-index:2;pointer-events:none;border-left:1px dashed #d98a1f;opacity:.7}
 .dsh-tokenlens-chart-readout{position:absolute;top:4px;z-index:3;pointer-events:none;max-width:calc(100% - 8px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border:1px solid var(--dsw-alias-border-subtle,rgba(127,127,127,.3));border-radius:6px;background:var(--dsw-alias-bg-elevated,#202124);color:var(--dsw-alias-label-primary);font-size:11px;line-height:1.4;padding:2px 6px;box-shadow:0 2px 8px rgba(0,0,0,.25);font-variant-numeric:tabular-nums}
-.dsh-tokenlens-chart-xaxis{position:relative;flex:none;height:14px;min-width:0;max-width:100%;overflow:hidden}
+.dsh-tokenlens-chart-xaxis{position:relative;flex:none;height:14px;min-width:0;max-width:100%;overflow:visible}
 .dsh-tokenlens-chart-x-label{position:absolute;top:2px;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:1.2;white-space:nowrap;font-variant-numeric:tabular-nums}
 .dsh-tokenlens-chart-summary{display:flex;flex-wrap:wrap;gap:4px 12px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:1.4;min-width:0}
 .dsh-tokenlens-chart-summary>span{font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
@@ -4078,6 +4083,15 @@ window.__ModuleLoader__.load({
       if (designPlan.multiplier !== null) {
         notes.push(t('designPlanMultiplier', { multiplier: designPlan.multiplier }))
       }
+      // v1.6.4: when the wallet-inclusive local estimate is HIGHER than the
+      // Design-Plan figure, the difference was paid from the account balance and
+      // must not be presented as Design Plan consumption.
+      if (designPlan.localPricedUsd !== null && designPlan.estimatedUsd !== null) {
+        const walletShare = designPlan.localPricedUsd - designPlan.estimatedUsd
+        if (walletShare > 0.005) {
+          notes.push(t('designPlanWalletShare', { amount: formatMoney(walletShare, 'USD') }))
+        }
+      }
       // v1.6.2: a model without a documented price makes the figure a lower bound.
       // Say it rather than letting the number read as complete.
       if (designPlan.partial === true) notes.push(t('designPlanPartialPricing'))
@@ -4576,16 +4590,17 @@ window.__ModuleLoader__.load({
         ),
       )
       const bars = points.map((point, index) => spec.bar(point, index, { max, hovered: index === hoverIndex }))
+      // v1.6.3: centre every label under ITS OWN bar. The bars are a flex row of
+      // equal cells, so bar i is centred at (i + 0.5) / count of the plot width.
+      // The old code pinned the first label to the left edge and the last to the
+      // right edge, which only lines up when the bars fill the whole width: with
+      // 3 bars the first label sat at 0% while its bar was centred at 16.7%, and
+      // the last sat at 100% while its bar was at 83.3% — the dates drifted off
+      // their columns (reported for a 3-day series).
       const xLabels = chartXLabelIndices(points.length).map((index) => {
         const point = points[index]
         const label = spec.xLabel(point, index)
-        const first = index === 0
-        const last = index === points.length - 1
-        const style = first
-          ? { left: '0%' }
-          : last
-            ? { right: '0%' }
-            : { left: `${((index + 0.5) / points.length) * 100}%`, transform: 'translateX(-50%)' }
+        const style = { left: `${((index + 0.5) / points.length) * 100}%`, transform: 'translateX(-50%)' }
         return h(
           'span',
           {
