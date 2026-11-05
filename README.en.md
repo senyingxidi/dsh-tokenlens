@@ -136,7 +136,7 @@ Host bridge route: `/api/tokenlens`; agent tool: `tokenlens_usage`.
 ## Limitations
 
 - Provider usage endpoints are mostly private / undocumented and may change at any time; the plugin degrades gracefully (retryable errors, hidden chips, per-row fallbacks) but availability is not guaranteed.
-- Plan capacity shows native server values only: no token → money conversion; Command Code monthly percentage is not guessed when no grant is reported.
+- Plan capacity shows native server values only: no token → money conversion. Command Code's monthly percentage (v1.6.6) derives the grant as `credits.monthlyCredits + /alpha/usage/summary.totalMonthlyCredits` when the plan reports none; the denominator is the fixed plan pool and deliberately does **not** follow the selected model.
 - "Estimated consumable" is derived from local tokens and the plan percentage; it is only a hint, not a provider commitment.
 - The startup update check is on by default (switchable off) and compares the **latest npm release** only; commits on the GitHub repository are not detected — a git-installed plugin must be uninstalled and reinstalled to update.
 - Local stats cover connected harnesses on this machine only; uninstalled harnesses are hidden by default (`stats.showUninstalled: true` shows them). Workspace token badges are experimental.
@@ -144,7 +144,7 @@ Host bridge route: `/api/tokenlens`; agent tool: `tokenlens_usage`.
 
 ## Development
 
-Node.js ≥ 24, zero runtime dependencies: `node --test` runs the 352 tests.
+Node.js ≥ 24, zero runtime dependencies: `node --test` runs the 355 tests.
 
 Release: `node scripts/bump-version.mjs <version> "<note>"` updates `package.json`, `PLUGIN_VERSION` and `CHANGELOG.md`; see [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 

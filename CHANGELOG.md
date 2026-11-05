@@ -4,9 +4,18 @@
 
 **版本记录约定**：同一发布日只保留一个章节，标题取当日**最后一个**已发布版本号；当日多次发布的改动合并到该章节，并在标题下注明当日实际发布过的版本号（npm 上仍可安装这些独立版本）。若当日已有发布，后续小改动不再单独增加版本号，而是并入下一篇日志。这样日志按天规整、不出现同日多个小版本。
 
-## 1.6.5 — 2026-11-05
+## 1.6.6 — 2026-11-05
 
-（当日已发布版本：v1.6.5。修复 GitHub issue #1）
+（当日已发布版本：v1.6.5 / v1.6.6）
+
+- **feat(commandcode): 补上月用量百分比**——该平台付费套餐**不下发** `monthlyCreditsGranted`（额度分母），此前月窗口只能是 `unknown`。现在同时读 `GET /alpha/usage/summary`（控制台自己用的那个接口），用两个字段反推额度：`grant = credits.monthlyCredits（余额）+ totalMonthlyCredits（本期消费）`。实测 `69.1272003646 + 0.8727996354 = 70.0000000000`（多时点复核均精确 70），与控制台前端内置的 `totalCredits: 70` 一致
+- feat(commandcode): 月窗口因此同时具备**已用 / 额度 / 百分比 / 重置时间**（`$0.99 / $70.00 · 1.4%`），与 5 小时、每周两个窗口口径一致
+- **fix(commandcode): 不再把 `windowLimits.limited` 当作告警状态**——它是「本套餐带滚动窗口限制」的**能力标志**，同层另有 `exceeded`。原来映射成 `status: "limited"`，而客户端把任何非 `ok` 状态渲染为告警，导致用量仅 6% 时三个窗口全被涂成红色。现在只有各窗口 `exceeded === true` 才置为非 `ok`，其余按百分比自身分级
+- feat(commandcode): 套餐名映射补全 `individual-goat → GOAT`、`individual-pro/v1 → Pro`、`individual-max → Max`、`individual-ultra → Ultra`（此前 GOAT 直接显示原始 id）
+- **口径说明**：月额度分母**不随所选模型变化**。GOAT 宣传「Up to $100」并给出按模型额度（DeepSeek V4.1 Flash 为 $100），那是同一份额度在折价模型上的「等效可用金额」，额度池始终是 `totalCredits: 70` 这一个数。若让分母跟随所选模型，切换模型时百分比会跳动而账户并未变化，故按固定池计算
+- 测试：352 → 355（月额度反推、分母不随模型变化、已上报额度优先于反推、`limited` 是能力标志而非状态、月窗口渲染与配色）
+
+### v1.6.5 同日内容（修复 GitHub issue #1）
 
 - **fix(ui): 没有额度适配器的供应商不再隐藏芯片**——`unsupported-provider` 按协议会静默隐藏芯片，但芯片同时是**本机 Token 统计的唯一入口**，于是「有数据却永远看不到」：选中 `xiaomi-token-plan-cn` 时 `usage-cache.json` 里躺着 3.19 亿 Token 却无处可查（issue #1 的核心投诉）。现在这类供应商保留一个「**仅本机统计**」芯片（圆点为正常态而非告警），点开即见统计区——统计区本就不依赖快照
 - **feat(providers): 新增小米 MiMo「Token Plan」额度适配器**（`xiaomi-token-plan-cn` / `-ams` / `-sgp` 三个区域）——额度接口在控制台域 `platform.xiaomimimo.com`：`/api/v1/tokenPlan/usage`（`plan_total_token` 与 `monthUsage`）、`/api/v1/tokenPlan/detail`（`planCode`、`currentPeriodEnd`）、`/api/v1/balance`（人民币余额）

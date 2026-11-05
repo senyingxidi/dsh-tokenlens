@@ -161,12 +161,24 @@ test('parseCommandCode maps a paid plan: 5-hour, weekly and monthly credit usage
   assert.equal(result.windows.monthly.unit, 'USD')
 })
 
-test('parseCommandCode marks limited windows and tolerates a missing subscription', () => {
-  const limited = structuredClone(COMMANDCODE_PAID)
-  limited.credits.windowLimits.limited = true
-  const result = parseCommandCode(limited, NOW)
-  assert.equal(result.windows.rolling.status, 'limited')
-  assert.equal(result.windows.weekly.status, 'limited')
+test('parseCommandCode reads `limited` as a capability flag, not as a warning (v1.6.6)', () => {
+  // The live GOAT payload says `windowLimits.limited: true` while every
+  // `fiveHour.exceeded` / `weekly.exceeded` is false: `limited` only means "this
+  // plan paces you with rolling windows". Emitting it as a status made the client
+  // paint a 6%-used account as critical, because PROTOCOL renders any non-"ok"
+  // status as an alert. Only a real `exceeded` may do that.
+  const pacingPlan = structuredClone(COMMANDCODE_PAID)
+  pacingPlan.credits.windowLimits.limited = true
+  const paced = parseCommandCode(pacingPlan, NOW)
+  assert.equal(paced.windows.rolling.status, 'ok', 'merely having windows is not a warning')
+  assert.equal(paced.windows.weekly.status, 'ok')
+
+  const exhausted = structuredClone(COMMANDCODE_PAID)
+  exhausted.credits.windowLimits.limited = true
+  exhausted.credits.windowLimits.fiveHour.exceeded = true
+  const exceeded = parseCommandCode(exhausted, NOW)
+  assert.equal(exceeded.windows.rolling.status, 'limited', 'a real exhaustion IS a status')
+  assert.equal(exceeded.windows.weekly.status, 'ok', 'the untouched window stays ok')
 
   const noSubscription = parseCommandCode({ ...COMMANDCODE_PAID, subscription: undefined }, NOW)
   assert.equal(noSubscription.plan, null)
@@ -174,14 +186,82 @@ test('parseCommandCode marks limited windows and tolerates a missing subscriptio
   assert.equal(noSubscription.windows.monthly.resetsAt, null, 'no billing period is known')
 })
 
+test('the monthly percentage is derived from remaining + period spend (v1.6.6)', () => {
+  // A paid GOAT plan omits `monthlyCreditsGranted`, so the grant comes from the
+  // arithmetic proved against the live API:
+  //   grant = credits.monthlyCredits (remaining) + usage.totalMonthlyCredits (spend)
+  // Real values captured 2026-11-05 on `individual-goat`.
+  const paid = {
+    credits: {
+      credits: { monthlyCredits: 69.085104928, purchasedCredits: 0 },
+      windowLimits: {
+        limited: true,
+        fiveHour: { cap: 14, used: 0.9119659668, resetAt: 1793904066643 },
+        weekly: { cap: 35, used: 0.9119659668, resetAt: 1794490866643 },
+      },
+    },
+    subscription: { success: true, data: { planId: 'individual-goat', status: 'active', currentPeriodEnd: '2026-12-05T13:36:10.000Z' } },
+    usageSummary: { totalMonthlyCredits: 0.9119659668, periodBasis: 'billing-period' },
+  }
+  const parsed = parseCommandCode(paid, NOW)
+  // 69.085104928 + 0.9119659668 = 69.9970708948 (the summary lags a fraction).
+  assert.ok(Math.abs(parsed.windows.monthly.cap - 69.9970708948) < 1e-9, `cap was ${parsed.windows.monthly.cap}`)
+  assert.ok(Math.abs(parsed.windows.monthly.used - 0.9119659668) < 1e-9, 'used is the period spend')
+  assert.ok(Math.abs(parsed.windows.monthly.percent - 1.3028) < 0.01, `percent was ${parsed.windows.monthly.percent}`)
+  assert.equal(parsed.windows.monthly.unit, 'USD')
+  assert.equal(parsed.windows.monthly.resetsAt, '2026-12-05T13:36:10.000Z', 'the period end comes from the subscription')
+  assert.equal(parsed.windows.monthly.status, 'ok', 'a 1%-used month is not a warning')
+  assert.deepEqual(parsed.plan, { id: 'individual-goat', label: 'GOAT' })
+  assert.equal(parsed.credits.granted, parsed.windows.monthly.cap, 'the derived grant is reported on credits too')
+})
+
+test('the monthly denominator never follows the selected model (v1.6.6)', () => {
+  // GOAT advertises "up to $100" and per-model allowances ($100 on DeepSeek V4.1
+  // Flash, $60 on others) because the same credits stretch further on a discounted
+  // model — but the pool is ONE number. Dividing by a per-model figure would make
+  // the meter move when the user merely switches models, so the parser takes no
+  // model input at all and the derived pool stays 70 whatever was used.
+  const base = {
+    credits: {
+      credits: { monthlyCredits: 69.1272003646, purchasedCredits: 0 },
+      windowLimits: { limited: true, fiveHour: { cap: 14, used: 0.8727996354 }, weekly: { cap: 35, used: 0.8727996354 } },
+    },
+    subscription: { success: true, data: { planId: 'individual-goat', currentPeriodEnd: '2026-12-05T13:36:10.000Z' } },
+    usageSummary: { totalMonthlyCredits: 0.8727996354 },
+  }
+  const parsed = parseCommandCode(base, NOW)
+  // 69.1272003646 + 0.8727996354 is exactly 70 — the pool, not a model allowance.
+  assert.equal(parsed.windows.monthly.cap, 70, 'the derived pool is exactly the plan pool')
+  // The per-model "$100" must NOT appear as a denominator.
+  assert.notEqual(parsed.windows.monthly.cap, 100)
+  assert.notEqual(parsed.windows.monthly.cap, 60)
+})
+
+test('a plan that reports its grant still wins over the derived pool', () => {
+  // The derivation is a fallback: a payload carrying monthlyCreditsGranted is
+  // authoritative and is used verbatim.
+  const parsed = parseCommandCode(
+    {
+      ...structuredClone(COMMANDCODE_PAID),
+      usageSummary: { totalMonthlyCredits: 5.5 },
+    },
+    NOW,
+  )
+  assert.equal(parsed.windows.monthly.cap, 10, 'the reported grant is used, not the derivation')
+  assert.equal(parsed.windows.monthly.percent, 55)
+})
+
 test('plan labels are documented ids only; grants are never guessed', () => {
   assert.equal(commandcodePlanLabel('individual-go-v1'), 'Go')
   assert.equal(commandcodePlanLabel('individual-go'), 'Go')
-  assert.equal(commandcodePlanLabel('individual-goat'), 'individual-goat', 'an unknown plan keeps its raw id')
-  assert.equal(commandcodePlanLabel('unknown-plan'), 'unknown-plan')
+  // v1.6.6: GOAT/Pro/Max/Ultra ids are documented on the pricing page.
+  assert.equal(commandcodePlanLabel('individual-goat'), 'GOAT')
+  assert.equal(commandcodePlanLabel('individual-pro'), 'Pro')
+  assert.equal(commandcodePlanLabel('unknown-plan'), 'unknown-plan', 'an unknown plan keeps its raw id')
   assert.equal(commandcodePlanLabel(null), null)
 
-  // A grant the API did not report must not size the monthly percentage.
+  // Without either a reported grant or a usage summary, the monthly percentage
+  // stays null: the plugin never sizes it from a plan catalog.
   const noGrant = structuredClone(COMMANDCODE_PAID)
   delete noGrant.credits.credits.monthlyCreditsGranted
   const noGrantParsed = parseCommandCode(noGrant, NOW)
@@ -281,6 +361,7 @@ test('the Command Code adapter survives a failing optional subscription/whoami r
     if (url.endsWith('/alpha/billing/credits')) return COMMANDCODE_PAID.credits
     if (url.endsWith('/alpha/billing/subscriptions')) return COMMANDCODE_PAID.subscription
     if (url.endsWith('/alpha/whoami')) throw new UsageError('network', 'offline')
+    if (url.endsWith('/alpha/usage/summary')) throw new UsageError('network', 'offline')
     throw new Error(`unexpected url ${url}`)
   }
   const result = await ADAPTERS.commandcode.read({
@@ -291,6 +372,9 @@ test('the Command Code adapter survives a failing optional subscription/whoami r
   assert.equal(readChecks(reads), true)
   assert.equal(result.windows.rolling.percent, 20)
   assert.equal(result.account, null, 'whoami failure only costs the account label')
+  // The reported grant still sizes the month when the summary is unreachable:
+  // granted 10, remaining 4.5 -> 55%.
+  assert.equal(result.windows.monthly.percent, 55, 'the reported grant carries the month on its own')
 })
 
 test('the OpenCode adapter reads the usage endpoint', async () => {
@@ -309,10 +393,20 @@ test('the OpenCode adapter reads the usage endpoint', async () => {
 
 function readChecks(urls) {
   return (
-    urls.length === 3 &&
+    // v1.6.6: the usage aggregate joined the read so the monthly percentage can
+    // be sized; it is optional, so it is allowed but not required here.
+    urls.length >= 3 &&
+    urls.length <= 4 &&
     urls.some((url) => url.endsWith('/alpha/billing/credits')) &&
     urls.some((url) => url.endsWith('/alpha/billing/subscriptions')) &&
-    urls.some((url) => url.endsWith('/alpha/whoami'))
+    urls.some((url) => url.endsWith('/alpha/whoami')) &&
+    urls.every(
+      (url) =>
+        url.endsWith('/alpha/billing/credits') ||
+        url.endsWith('/alpha/billing/subscriptions') ||
+        url.endsWith('/alpha/whoami') ||
+        url.endsWith('/alpha/usage/summary'),
+    )
   )
 }
 

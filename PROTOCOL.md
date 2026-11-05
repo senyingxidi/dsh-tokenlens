@@ -101,13 +101,42 @@ Provider semantics:
 | provider id | kind | windows | extra |
 |---|---|---|---|
 | `opencode-go` | `windows` | rolling/weekly/monthly percentages | — |
-| `commandcode` | `windows` | rolling = 5-hour `used/cap`, weekly = `used/cap`, monthly = `(granted - remaining)/granted` (only when the API reports the grant) | `plan`, `credits` (USD), `account` |
+| `commandcode` | `windows` | rolling = 5-hour `used/cap`, weekly = `used/cap`, monthly = `used/granted` where `granted` is the API-reported grant, else `credits.monthlyCredits + /alpha/usage/summary.totalMonthlyCredits` (v1.6.6) | `plan`, `credits` (USD), `account` |
 | `deepseek` (picker id `deepseek-official`) | `balance` | `null` | `balance` (API-key account balance, CNY/USD) |
 | `deepseek-account` | `balance` | `null` | `balance` from the composed Platform account service (signed-in wallets) |
 | `open-design` | `windows` | rolling = 5-hour Design Plan window, weekly = 7-day window, monthly = 30-day window when reported (used / limit credits, capped at 100%) | `balance` (independent wallet balance, USD) |
 
 `balance` is `{ amount, currency }` plus, for the account provider,
 `wallets: [{currency, amount}]` and `bonus: [{currency, amount}]`.
+
+### Command Code's monthly percentage (v1.6.6)
+
+`commandcode` reads four routes: `/alpha/billing/credits`, `/alpha/billing/subscriptions`,
+`/alpha/whoami`, and `/alpha/usage/summary` — the last one is the aggregate the provider's
+own console renders, and it is what makes the monthly percentage computable, because a paid
+plan does **not** send `monthlyCreditsGranted`:
+
+```
+granted = credits.monthlyCredits (remaining) + usage.totalMonthlyCredits (period spend)
+```
+
+Verified live on `individual-goat`: `69.1272003646 + 0.8727996354 = 70.0000000000`, and the
+console's own bundle declares `totalCredits: 70` for that plan. The only imprecision is that
+`/alpha/usage/summary` lags by a fraction of a cent, so the derived grant can read ~$0.003
+under the pool for a moment; it self-corrects on the next poll. A reported grant always wins
+over the derivation, and when neither is available the monthly `percent` stays `null` — the
+plugin never sizes a month from a plan catalog.
+
+**The denominator is deliberately model-independent.** GOAT advertises "up to $100" and lists
+per-model allowances ($100 on DeepSeek V4.1 Flash, $60 on several others) because the same
+credits stretch further on a discounted model; the pool itself is one number. Letting the
+picker change the denominator would move the meter while the account did not change, so
+`parseCommandCode` takes no model input.
+
+`windowLimits.limited` is a **capability flag** ("this plan paces you with rolling windows"),
+not a state: the live payload carries `limited: true` together with `fiveHour.exceeded: false`.
+Only a per-window `exceeded === true` produces a non-`ok` status, because the client renders
+any other status as an alert (which made a 6%-used account look critical before v1.6.6).
 
 A `windows` snapshot may also carry a non-null `balance` (Open Design reports
 allowance windows and a wallet independently); the Client renders it as one extra

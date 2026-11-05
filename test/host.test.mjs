@@ -1615,6 +1615,19 @@ const COMMANDCODE_ROUTES = {
   '/alpha/billing/subscriptions': () =>
     jsonResponse({ success: true, data: { planId: 'individual-go-v1', status: 'active', currentPeriodEnd: '2026-11-09T00:00:00.000Z' } }),
   '/alpha/whoami': () => jsonResponse({ success: true, user: { name: 'Account', userName: 'acct' } }),
+  // v1.6.6: the console's own usage aggregate. `totalMonthlyCredits` is the
+  // period spend that sizes the month when the plan reports no grant.
+  '/alpha/usage/summary': () =>
+    jsonResponse({
+      totalCount: 397,
+      totalCost: 0.5,
+      totalTokens: 102625837,
+      totalMonthlyCredits: 0.5,
+      totalCredits: 0.5,
+      periodBasis: 'billing-period',
+      periodStart: '2026-10-25T00:00:00.000Z',
+      daily: [],
+    }),
 }
 
 test('provider-aware: Command Code windows are served for providerId "commandcode"', async (t) => {
@@ -1637,7 +1650,10 @@ test('provider-aware: Command Code windows are served for providerId "commandcod
   assert.equal(snapshot.windows.monthly.cap, 10)
   assert.deepEqual(snapshot.credits, { remaining: 4.5, granted: 10, purchased: 0 })
   assert.equal(snapshot.account.userName, 'acct')
-  assert.equal(calls.length, 3, 'credits + subscriptions + whoami')
+  // v1.6.6: `/alpha/usage/summary` joined the read (it sizes the month when the
+  // plan reports no grant), so four routes are hit instead of three.
+  assert.equal(calls.length, 4, 'credits + subscriptions + whoami + usage summary')
+  assert.ok(calls.some((url) => url.endsWith('/alpha/usage/summary')), 'the usage aggregate is read')
   assert.ok(calls.every((url) => url.startsWith('https://api.commandcode.ai/')))
 
   const diagnostics = await bridge(captured, { action: 'diagnostics' })

@@ -308,7 +308,7 @@ Control Key 是 **Open Design 桌面端/CLI 登录时写入本机的会话凭据
 | 供应商 | 数据来源（Key 或服务） | 展示 |
 |---|---|---|
 | `opencode-go` / `opencode` | `GET https://opencode.ai/inference/go/v1/usage`（`OPENCODE_GO_API_KEY`） | 5 小时 / 本周 / 本月 已用百分比 + 重置时间 |
-| `commandcode` | `api.commandcode.ai/alpha/billing/{credits,subscriptions}` + `/alpha/whoami`（`COMMANDCODE_API_KEY`） | 5 小时 / 每周 `$已用 / $上限`；月度额度；方案名 |
+| `commandcode` | `api.commandcode.ai/alpha/billing/{credits,subscriptions}` + `/alpha/whoami` + `/alpha/usage/summary`（`COMMANDCODE_API_KEY`） | 5 小时 / 每周 `$已用 / $上限`；月度 `$已用 / $额度 · %`（v1.6.6）；方案名 |
 | `deepseek`（选择器里的 `deepseek-official`） | `GET https://api.deepseek.com/user/balance`（`DEEPSEEK_API_KEY`） | 账户余额 |
 | `deepseek-account` | DSH 组合内的 `deepseekAccount` 服务 | 钱包余额（含赠送） |
 | `openrouter` | `GET https://openrouter.ai/api/v1/credits`（管理 Key；普通 Key 可用 `/api/v1/key`） | 剩余额度（USD） |
@@ -326,7 +326,8 @@ Control Key 是 **Open Design 桌面端/CLI 登录时写入本机的会话凭据
 | `xiaomi-token-plan-cn` / `-ams` / `-sgp` | 控制台额度接口：`GET https://platform.xiaomimimo.com/api/v1/tokenPlan/usage` + `/tokenPlan/detail`（周期结束时间、方案码）+ `/api/v1/balance`（人民币余额）。**只认控制台 Cookie**（`XIAOMI_MIMO_COOKIE`），推理 Key 一律 401 | Token Plan 的每月 已用百分比 + 重置时间；方案码；账户余额（CNY） |
 
 - OpenCode 的额度定义见[官方文档](https://opencode.ai/docs/go/#usage-limits)（5h = 月度额度的 20%、周 = 50%、月 = 100%）；接口只返回百分比，插件也只画百分比。
-- Command Code 的 `/alpha/*` 是官方 CLI 自用的私有计费路由；免费 / 无方案账户返回空窗口（显示 `—`），插件不会用方案目录猜额度。
+- Command Code 的 `/alpha/*` 是官方 CLI 自用的私有计费路由；免费 / 无方案账户返回空窗口（显示 `—`），插件不会用方案目录猜额度。**月度百分比**（v1.6.6）在套餐不下发额度时由 `credits.monthlyCredits（余额）+ /alpha/usage/summary 的 totalMonthlyCredits（本期消费）` 反推额度后计算，实测与该平台控制台一致；分母是**固定的额度池，不随所选模型变化**——GOAT 宣传的「Up to $100」与按模型额度（DeepSeek V4.1 Flash $100）只是同一份额度在折价模型上的等效值，若让分母跟随模型，切换模型时百分比会跳动而账户未变。
+- **「有限额」不等于「已超限」**（v1.6.6）。Command Code 的 `windowLimits.limited` 是「本套餐带滚动窗口」的能力标志，真正的状态在同层 `exceeded`；插件此前把它当状态输出，会让用量仅 6% 的三个窗口全被涂成告警色，现已只有 `exceeded === true` 才告警。
 - Open Design 的窗口按账户实际返回的时长渲染：Go 同时有 5 小时和 7 天窗口，Plus / Pro / Max 只有 7 天窗口；钱包余额是独立于窗口的 USD 额度，用尽后继续扣钱包。查询要求工作区权限，鉴权失败会明确显示错误而不是 0。**只需填一个 Control Key**：工作区 ID 是可选项（v1.5.3），插件会用 Key 调 `/api/v1/workspaces/current` 自动识别你的工作区；只有账号有多个工作区、需要指定其中一个时才在管理页填「工作区 ID」。真正缺 Key 时弹窗会指出并给出「去配置」入口。窗口、余额、套餐档位是**三层独立读取**（v1.4.0）：任一接口不可用时只少那一块数据，不会整套报错。
 - **chip 的「月 N%」与「本期 Design Plan 累计」是插件本机算的估算值**（v1.5.0 / v1.6.0）。Open Design 有月度额度（Go 为每月 $120 = 4 × 每周 $30），但**没有「本账期已用」接口**——控制台的 `/billing/usage`、`/billing/coding-plan-usage` 都靠浏览器 Cookie 鉴权，Control Key 一律 401。于是插件累加它观测到的 **7 天窗口**（只记 7 天，因为 5 小时窗口测量的是同一笔消耗，相加会重复计数）。
 - **金额按服务端 credits 反推，只统计 Design Plan 额度消耗**（v1.6.4）。钱包扣费不消耗 credits，只扣 `balanceUsd`，所以「本期 Design Plan 累计」= `usedCredits ÷ creditsPerUsd ÷ 倍率`——实测 `150,005 ÷ 10,000 ÷ 0.5 = $30.00`，与「周额度 $30 × 已用 100%」交叉验证一致。含钱包付费的本机估算另存为 `localPricedUsd`，高于前者时弹窗追加「另有 $X 由账户余额支付，未计入」，两个口径都清楚可查。
@@ -430,7 +431,7 @@ Host 半注册 `tokenlens_usage`，参数 `action`（默认 `snapshot`）与可�
 ## 已知限制
 
 - 各供应商的用量接口多为**未公开的私有接口**，可能随时变更；插件对此做了优雅降级（可重试错误、静默隐藏、行级降级），但不保证长期可用。
-- 套餐容量只显示服务端原生数字：不做 token → 金额换算；Command Code 未报告 grant 时不计算月度百分比。
+- 套餐容量只显示服务端原生数字：不做 token → 金额换算；Command Code 的月度百分比由「余额 + 本期消费」反推额度后计算（v1.6.6），两者都拿不到时才留空。
 - 「预计可消耗」是基于本机 Token 与套餐百分比的**估算**，仅供参考，不代表供应商承诺的额度。
 - 「启动时检查更新」默认开启（可在插件设置关闭），只对比 **npm 上的最新发布版本**；GitHub 仓库的提交更新不会被感知，需要卸载重装 git 安装的版本才会更新。
 - 本机 Token 统计只覆盖**已接入 harness**（当前 DSH / ZCode / OpenCode CLI / WorkBuddy / Qoder CN），只统计本机的本地记录。
@@ -444,7 +445,7 @@ Host 半注册 `tokenlens_usage`，参数 `action`（默认 `snapshot`）与可�
 
 ## 验证
 
-- `node --test`：**352 个自动化用例**，覆盖 Host 数据层、供应商适配器（含小米 MiMo 控制台 Cookie 适配器）、统计折叠、各 harness 读取、Design Plan 周期账本与额度计价、窗口锚点切片、工作区自动识别、插件集成与浏览器端渲染 / 交互。
+- `node --test`：**355 个自动化用例**，覆盖 Host 数据层、供应商适配器（含小米 MiMo 控制台 Cookie 适配器、Command Code 月度额度反推）、统计折叠、各 harness 读取、Design Plan 周期账本与额度计价、窗口锚点切片、工作区自动识别、插件集成与浏览器端渲染 / 交互。
 - 在真实环境中验证过 **5 个 harness** 的数据源；本机统计与独立的 SQLite 查询、独立的日志解析逐项对账（差额为 0），跨 harness 合并与供应商映射算术自洽。
 - 供应商接口按各官方文档与参考客户端行为验证；未配置凭据时 chip 静默隐藏，接口异常时按可重试错误降级。
 

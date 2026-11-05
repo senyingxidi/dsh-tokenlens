@@ -261,16 +261,17 @@ function snapshotFixture(providerId = 'opencode-go') {
         // Command Code windows carry the provider-native dollar capacity.
         rolling: windowFixture(20, 2.5, { used: 0.5, cap: 2.5, unit: 'USD' }),
         weekly: windowFixture(45, 30, { used: 4.5, cap: 10, unit: 'USD' }),
-        // The monthly percentage is unknown without an API-reported grant, but
-        // the dollar capacity can still be known.
+        // v1.6.6: the monthly percentage is no longer unknown — the Host derives
+        // the grant as `monthlyCredits + period spend` (see parseCommandCode), so
+        // the month now carries a real percentage alongside its dollar capacity.
         monthly: {
           id: 'monthly',
-          percent: null,
-          status: 'unknown',
-          resetsAt: null,
-          remainingMs: null,
-          used: 5.5,
-          cap: 10,
+          percent: 1.42,
+          status: 'ok',
+          resetsAt: new Date(now + 30 * 86400000).toISOString(),
+          remainingMs: 30 * 86400000,
+          used: 0.99,
+          cap: 70,
           unit: 'USD',
         },
       },
@@ -1124,7 +1125,22 @@ test('a balance provider renders the money instead of percentages', async () => 
 })
 
 test('a provider without a monthly plan renders an em dash for it', async () => {
-  const plugin = loadPlugin()
+  // A provider whose upstream reports no monthly window still gets a row; the
+  // missing percentage renders as an em dash rather than a fabricated 0%.
+  const base = snapshotFixture('commandcode')
+  const snapshot = {
+    ...base,
+    windows: {
+      ...base.windows,
+      monthly: { id: 'monthly', percent: null, status: 'unknown', resetsAt: null, remainingMs: null },
+    },
+  }
+  const plugin = loadPlugin((payload) => {
+    if (payload.action === 'hello') return { ok: true }
+    if (payload.action === 'stats') return { ok: true, stats: statsFixture() }
+    if (payload.action === 'providers') return providersFixture()
+    return { ok: true, snapshot }
+  })
   try {
     const tree = await settleChip(plugin, 'commandcode')
     const text = textOf(tree)
@@ -1540,7 +1556,7 @@ test('the dialog lists windows, plan header and today/all-time token statistics'
   }
 })
 
-test('a command code dialog shows the dollar capacity, credits and the null monthly percent', async () => {
+test('a command code dialog shows the dollar capacity and the derived monthly percent (v1.6.6)', async () => {
   const plugin = loadPlugin()
   try {
     const tree = await settleDialog(plugin, 'commandcode')
@@ -1554,16 +1570,19 @@ test('a command code dialog shows the dollar capacity, credits and the null mont
     // Command Code is the provider that sizes its windows in dollars.
     assert.match(text, /\$0\.50 \/ \$2\.50/)
     assert.match(text, /\$4\.50 \/ \$10\.00/)
-    assert.match(text, /\$5\.50 \/ \$10\.00/)
+    // v1.6.6: the month is sized in dollars too, and now carries a percentage
+    // derived from `monthlyCredits + period spend`.
+    assert.match(text, /\$0\.99 \/ \$70\.00/)
+    assert.match(text, /1\.4%/)
     const money = findAll(tree, (element) => element.props?.className === 'dsh-tokenlens-capacity-money')
     assert.equal(money.length, 3, 'each sized window carries its dollar capacity')
     const percents = findAll(tree, (element) => element.props?.className === 'dsh-tokenlens-percent')
     assert.equal(percents.length, 3)
     assert.deepEqual(
       percents.map((element) => element.props['data-level']),
-      ['normal', 'normal', 'unknown'],
+      ['normal', 'normal', 'normal'],
+      'a barely-used month is not a warning',
     )
-    assert.equal(text.includes('—'), true, 'the missing monthly percent renders as a dash')
   } finally {
     plugin.dispose()
   }
