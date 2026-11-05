@@ -326,12 +326,29 @@ function statsFixture(overrides = {}) {
     dsh: triple(0, 1320000000, 800000000, { today: 0, month: 600, all: 900 }),
     zcode: triple(0, 4336000000, 4336000000, { today: 0, month: 3000, all: 6000 }),
   })
+  // v1.7.0: a provider-scoped TPS series, so the chart follows the scope switch.
+  opencodeGo.speed = {
+    byDay: [
+      { day: '2026-10-24', outputTokens: 2000, seconds: 20, tps: 100, steps: 12 },
+      { day: '2026-10-25', outputTokens: 1500, seconds: 25, tps: 60, steps: 9 },
+    ],
+    total: { outputTokens: 3500, seconds: 45, tps: 77.8, steps: 21 },
+  }
   return {
     version: 3,
     generatedAt: new Date(Date.now() - 5000).toISOString(),
     timezone: 'Asia/Shanghai',
     day: '2026-10-25',
     last30DaysStart: '2026-09-26',
+    // v1.7.0: the output-speed (TPS) series behind the new trend chart.
+    speed: {
+      byDay: [
+        { day: '2026-10-23', outputTokens: 1000, seconds: 20, tps: 50, steps: 10 },
+        { day: '2026-10-24', outputTokens: 2000, seconds: 20, tps: 100, steps: 12 },
+        { day: '2026-10-25', outputTokens: 1500, seconds: 25, tps: 60, steps: 9 },
+      ],
+      total: { outputTokens: 4500, seconds: 65, tps: 69.2, steps: 31 },
+    },
     // All-harness totals (include ZCode rows that map to no provider row).
     today: bucket({ total: 537214344, messages: 1028 }),
     last30Days: bucket({ total: 7983000000, messages: 11000 }),
@@ -692,8 +709,18 @@ function loadPlugin(handler = defaultHandler()) {
   assert.equal(registration?.id, 'dsh-tokenlens', 'the bundle registers the package id')
 
   const react = stubReact()
+  // v1.7.0: the dialog portals to <body>. The stub records the call and returns
+  // the node unchanged so the rendered tree keeps its shape for the assertions.
+  const portalCalls = []
+  const reactDom = {
+    createPortal(node, container) {
+      portalCalls.push({ node, container })
+      return node
+    },
+  }
   const require = (name) => {
     if (name === 'react') return react
+    if (name === 'react-dom') return reactDom
     if (name === '@deepseek-ai/dsh-client-ui-primitives') return stubPrimitives()
     throw new Error(`unexpected require(${JSON.stringify(name)})`)
   }
@@ -737,6 +764,8 @@ function loadPlugin(handler = defaultHandler()) {
     timeouts,
     dictionaries,
     effects,
+    /** Every react-dom `createPortal` call the bundle made (v1.7.0). */
+    portalCalls,
     /** Fire one window event registered by the bundle (e.g. `focus`). */
     fireWindowEvent(type, event = undefined) {
       for (const listener of windowListeners.filter((entry) => entry.type === type)) {
@@ -2398,6 +2427,46 @@ test('the refresh button refreshes usage and forces a fresh stats scan', async (
   }
 })
 
+test('the dialog portals to document.body so it can centre on the viewport (v1.7.0)', async (t) => {
+  // DSH 0.2.2-rc.1: rendering the overlay inside `conversation.input.overlay`
+  // made `position: fixed` resolve against the conversation area (an ancestor
+  // establishing a containing block), so the dialog could only appear at its
+  // bottom. The shell must therefore portal to <body>. The stub React does not
+  // execute function components, so this is asserted against the bundle source
+  // (the same technique the update-badge test uses).
+  const source = readFileSync(join(import.meta.dirname, '..', 'client.js'), 'utf8')
+  assert.match(source, /require\('react-dom'\)/, 'react-dom is required')
+  assert.match(source, /ReactDOM\.createPortal\(/, 'the shell portals instead of rendering inline')
+  assert.match(source, /createPortal\(node, document\.body\)/, 'it portals to document.body')
+  assert.match(source, /try \{\s*ReactDOM = require\('react-dom'\)\s*\} catch/, 'a missing react-dom degrades, never throws')
+
+  // Behaviourally: with a DOM present the dialog still renders its content.
+  const body = {}
+  globalThis.document = {
+    visibilityState: 'visible',
+    body,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }
+  try {
+    const plugin = loadPlugin()
+    t.after(() => plugin.dispose())
+    const tree = await settleDialog(plugin, 'opencode-go')
+    assert.match(textOf(tree), /套餐：Go/, 'the dialog content still renders with a DOM present')
+  } finally {
+    delete globalThis.document
+  }
+})
+
+test('without react-dom the dialog still renders inline (no portal, no crash)', async (t) => {
+  const plugin = loadPlugin()
+  t.after(() => plugin.dispose())
+  // No document at all -> the shell falls back to rendering the overlay inline.
+  const tree = await settleDialog(plugin, 'opencode-go')
+  assert.ok(tree !== null, 'the dialog still renders')
+  assert.equal(plugin.portalCalls.length, 0, 'nothing is portalled without a DOM')
+})
+
 test('a hidden page does not poll until visibilitychange says it is visible', async (t) => {
   const listeners = []
   globalThis.document = {
@@ -4029,6 +4098,45 @@ test('the dialog uses a balanced no-scrollbar two-row layout', () => {
   assert.match(source, /@media \(max-width:680px\)\{\.dsh-tokenlens-providers\{grid-template-columns:minmax\(0,1fr\)\}/, 'the provider grid collapses to one column when narrow')
 })
 
+test('the output-speed (TPS) trend renders under the details (v1.7.0)', async () => {
+  const plugin = loadPlugin()
+  try {
+    const tree = await settleDataDialog(plugin, 'opencode-go')
+    const section = findElement(tree, (element) => element.props?.['data-speed-section'] === 'true')
+    assert.ok(section, 'the speed section renders')
+    const text = textOf(section)
+    assert.match(text, /输出速度（TPS）/, 'it is labelled')
+    assert.match(text, /均值 77\.8 tok\/s/, 'the provider-scoped overall rate is stated')
+    // One bar per day, scaled by tps and carrying the raw numbers in its tooltip.
+    const bars = findAll(section, (element) => element.props?.['data-speed-day'] !== undefined)
+    assert.equal(bars.length, 2, 'one bar per day with samples')
+    assert.equal(bars[0].props['data-speed-tps'], '100', 'the peak day keeps its rate')
+    assert.match(String(bars[0].props.title), /2026-10-24 · 100\.0 tok\/s/, 'the tooltip names day + rate')
+    assert.match(String(bars[0].props.title), /2\.000K 输出 ÷ 20\.0s/, 'the tooltip shows the raw division')
+  } finally {
+    plugin.dispose()
+  }
+})
+
+test('a TPS series with no samples says so instead of drawing an empty chart (v1.7.0)', async () => {
+  const emptyStats = statsFixture({ speed: { byDay: [], total: { outputTokens: 0, seconds: 0, tps: null, steps: 0 } } })
+  // The dialog is in provider scope, so the row's own series is what it reads.
+  emptyStats.providers = emptyStats.providers.map((row) => ({ ...row, speed: null }))
+  const plugin = loadPlugin((payload) => {
+    if (payload.action === 'hello') return { ok: true }
+    if (payload.action === 'stats') return { ok: true, stats: emptyStats }
+    if (payload.action === 'providers') return providersFixture()
+    return { ok: true, snapshot: snapshotFixture(payload.providerId) }
+  })
+  try {
+    const tree = await settleDataDialog(plugin, 'opencode-go')
+    assert.ok(findElement(tree, (element) => element.props?.['data-speed-empty'] === 'true'), 'an empty state is shown')
+    assert.match(textOf(tree), /暂无可计算的速度样本/, 'it explains why')
+  } finally {
+    plugin.dispose()
+  }
+})
+
 test('the 数据 view uses the two-row layout: capacity+summary then full-width details', async () => {
   const plugin = loadPlugin()
   try {
@@ -4042,7 +4150,7 @@ test('the 数据 view uses the two-row layout: capacity+summary then full-width 
       'the old three-column flex-wrap grid is gone',
     )
     const rows = findAll(tree, (element) => element.props?.className === 'dsh-tokenlens-chart-layout-row')
-    assert.equal(rows.length, 2, 'one row for capacity+summary and one for the details card')
+    assert.equal(rows.length, 3, 'capacity+summary, then details, then the TPS trend')
     const hasClass = (element, name) =>
       typeof element?.props?.className === 'string' && element.props.className.split(/\s+/).includes(name)
     const capacity = findElement(rows[0], (element) => hasClass(element, 'dsh-tokenlens-capacity'))
@@ -4050,6 +4158,9 @@ test('the 数据 view uses the two-row layout: capacity+summary then full-width 
     const details = findElement(rows[1], (element) => hasClass(element, 'dsh-tokenlens-details'))
     assert.ok(capacity && summary, 'the first row holds capacity + token summary')
     assert.ok(details, 'the second row holds the details card')
+    // v1.7.0: the output-speed trend is its own full-width row UNDER 明细.
+    const speed = findElement(rows[2], (element) => element.props?.['data-speed-section'] === 'true')
+    assert.ok(speed, 'the third row holds the output-speed (TPS) trend')
 
     // Left: provider-side capacity, including the last-updated line.
     const capacityText = textOf(capacity)
@@ -4114,9 +4225,9 @@ test('the dialog and management page render inline SVG icons and provider avatar
       )
       assert.equal(textOf(svg), '', 'icons never inject text into textOf assertions')
     }
-    // The five named section-title icons and the two chrome icons are wired up.
+    // The named section-title icons and the two chrome icons are wired up.
     const titles = findAll(usage, (element) => element.props?.className === 'dsh-tokenlens-section-title')
-    assert.equal(titles.length, 3, 'capacity / token summary / details each carry a title')
+    assert.equal(titles.length, 4, 'capacity / token summary / details / speed each carry a title')
     for (const title of titles) {
       assert.equal(findAll(title, (element) => element.type === 'svg').length, 1, 'each title is prefixed with one icon')
     }
@@ -6056,10 +6167,14 @@ test('chart mode lays the details column out as its own row', async () => {
       'the default 图表 mode uses the explicit two-row layout',
     )
     const rows = findAll(tree, (element) => element.props?.className === 'dsh-tokenlens-chart-layout-row')
-    assert.equal(rows.length, 2, 'one row for capacity+chart and one for details')
+    assert.equal(rows.length, 3, 'capacity+chart, then details, then the TPS trend')
     assert.ok(findElement(rows[0], (element) => (element.props?.className ?? '').split(' ').includes('dsh-tokenlens-capacity')), 'the top row starts with capacity')
     assert.ok(findElement(rows[0], (element) => (element.props?.className ?? '').split(' ').includes('dsh-tokenlens-stats')), 'the top row carries the daily chart')
     assert.ok(findElement(rows[1], (element) => element.props?.className === 'dsh-tokenlens-section dsh-tokenlens-details'), 'the second row is the details card')
+    assert.ok(
+      findElement(rows[2], (element) => element.props?.['data-speed-section'] === 'true'),
+      'the third row is the output-speed trend, under 明细',
+    )
     assert.ok(
       findAll(tree, (element) => element.props?.['data-donut-group'] !== undefined).length >= 1,
       'the details charts render donut share groups',
@@ -6083,8 +6198,12 @@ test('chart mode lays the details column out as its own row', async () => {
       'the old three-column grid is gone',
     )
     const dataRows = findAll(tree, (element) => element.props?.className === 'dsh-tokenlens-chart-layout-row')
-    assert.equal(dataRows.length, 2)
+    assert.equal(dataRows.length, 3, 'capacity+summary, details, then the TPS trend')
     assert.ok(findElement(dataRows[1], (element) => (element.props?.className ?? '').includes('dsh-tokenlens-details')), 'the data details card is the full-width second row')
+    assert.ok(
+      findElement(dataRows[2], (element) => element.props?.['data-speed-section'] === 'true'),
+      '数据 mode carries the TPS trend too',
+    )
     assert.equal(findElement(tree, (element) => element.props?.['data-donut-group'] !== undefined), undefined, 'no donut groups in 数据 mode')
     const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
     assert.match(source, /\.dsh-tokenlens-chart-layout-row>\.dsh-tokenlens-details\{[^}]*flex:1 1 100%/, 'the details row is full width')

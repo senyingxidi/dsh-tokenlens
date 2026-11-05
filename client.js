@@ -40,6 +40,19 @@ window.__ModuleLoader__.load({
     // words in the shell's module table, so they need no `dsh.client.external`.
     const primitives = require('@deepseek-ai/dsh-client-ui-primitives')
     const { Modal, Button, Tooltip, IconRefreshOutlineRegular } = primitives
+    // v1.7.0: the dialog is portalled to <body>. Rendering it inside the
+    // `conversation.input.overlay` slot stopped reaching the viewport in DSH
+    // 0.2.2-rc.1: an ancestor there establishes a containing block (transform /
+    // filter / contain), so `position: fixed` resolved against the conversation
+    // area and the dialog could only appear at its bottom. `createPortal` escapes
+    // that ancestor entirely. Tolerated as optional so a Host without react-dom
+    // (and the Node test harness) simply renders inline as before.
+    let ReactDOM = null
+    try {
+      ReactDOM = require('react-dom')
+    } catch {
+      ReactDOM = null
+    }
 
     const h = React.createElement
 
@@ -215,6 +228,11 @@ window.__ModuleLoader__.load({
       statsProviderFallback: '当前供应商（{provider}）没有本机记录，显示全部 Harness 合计',
       statsDshTotalLabel: 'DSH 合计',
       statsLast30Days: '最近30天',
+      statsSpeedTitle: '输出速度（TPS）',
+      statsSpeedHint: '输出 Token ÷ 模型自身耗时（step 开始到消息返回）；不含工具调用等待，但输出含思考 Token',
+      statsSpeedTotal: '均值 {tps} tok/s',
+      statsSpeedEmpty: '暂无可计算的速度样本（需要 step 计时数据）',
+      statsSpeedBarTitle: '{date} · {tps} tok/s（{tokens} 输出 ÷ {seconds}s）',
       statsLast7Days: '最近7天',
       stats7DaysShort: '7天',
       statsDaysShort: '{n}天',
@@ -484,6 +502,12 @@ window.__ModuleLoader__.load({
       statsProviderFallback: 'No local records for the current provider ({provider}) — showing all-harness totals',
       statsDshTotalLabel: 'DSH total',
       statsLast30Days: 'Last 30 days',
+      statsSpeedTitle: 'Output speed (TPS)',
+      statsSpeedHint:
+        'Output tokens ÷ the model’s own request time (step start to message); tool waits excluded, reasoning tokens included',
+      statsSpeedTotal: 'avg {tps} tok/s',
+      statsSpeedEmpty: 'No speed samples yet (needs step timing data)',
+      statsSpeedBarTitle: '{date} · {tps} tok/s ({tokens} output ÷ {seconds}s)',
       statsLast7Days: 'Last 7 days',
       stats7DaysShort: '7d',
       statsDaysShort: '{n}d',
@@ -1523,6 +1547,8 @@ window.__ModuleLoader__.load({
         // v0.22.1: only subscription-backed providers use the 最近X天 window.
         subscribed: entry.subscribed === true,
         harnesses,
+        // v1.7.0: this provider's own output-speed series.
+        speed: normalizeSpeed(entry.speed),
       }
     }
 
@@ -1557,6 +1583,38 @@ window.__ModuleLoader__.load({
     }
 
     /** The whole stats payload, or null. Handles v1/v2 (DSH-ish) and v3 (provider-scoped). */
+    /**
+     * One output-speed (TPS) series (v1.7.0): `{byDay, total}` or null.
+     *
+     * `tps` is output tokens over the model's own request time, so a day whose
+     * `seconds` is not positive is dropped rather than shown as an infinite rate.
+     */
+    function normalizeSpeed(raw) {
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null
+      const byDay = Array.isArray(raw.byDay)
+        ? raw.byDay
+            .filter((entry) => entry !== null && typeof entry === 'object' && typeof entry.day === 'string')
+            .map((entry) => ({
+              day: entry.day,
+              outputTokens: numberOrNull(entry.outputTokens) ?? 0,
+              seconds: numberOrNull(entry.seconds) ?? 0,
+              tps: numberOrNull(entry.tps),
+              steps: numberOrNull(entry.steps) ?? 0,
+            }))
+            .filter((entry) => entry.tps !== null && entry.tps >= 0)
+        : []
+      const totalRaw = raw.total !== null && typeof raw.total === 'object' ? raw.total : {}
+      return {
+        byDay,
+        total: {
+          outputTokens: numberOrNull(totalRaw.outputTokens) ?? 0,
+          seconds: numberOrNull(totalRaw.seconds) ?? 0,
+          tps: numberOrNull(totalRaw.tps),
+          steps: numberOrNull(totalRaw.steps) ?? 0,
+        },
+      }
+    }
+
     function normalizeStats(raw) {
       if (raw === null || typeof raw !== 'object') return null
       const version = Number.isFinite(raw.version) ? raw.version : 1
@@ -1684,6 +1742,8 @@ window.__ModuleLoader__.load({
         workspaces,
         // v0.24.0 daily series for the chart mode (may be empty on old Hosts).
         daily,
+        // v1.7.0: output-speed (TPS) series across every harness.
+        speed: normalizeSpeed(raw.speed),
         zcode,
       }
     }
@@ -3874,7 +3934,10 @@ window.__ModuleLoader__.load({
             {
               type: 'button',
               className: 'dsh-tokenlens-chip',
-              title: t('chipHint'),
+              // v1.7.0: no native `title` here. Setting both a native title and
+              // the platform Tooltip made the two compete on hover (the native
+              // one stole/released hover as it appeared), which flickered the
+              // surrounding conversation area. The Tooltip carries the same text.
               'aria-label': t('chipHint'),
               'aria-haspopup': 'dialog',
               onClick: () => openDialog(sessionId),
@@ -3909,7 +3972,8 @@ window.__ModuleLoader__.load({
             {
               type: 'button',
               className: 'dsh-tokenlens-chip',
-              title: label,
+              // v1.7.0: same as the normal chip — only the platform Tooltip, so
+              // the native and platform tooltips cannot compete on hover.
               'aria-label': label,
               'aria-haspopup': 'dialog',
               ...(needsConfig ? { 'data-needs-config': 'true' } : {}),
@@ -4977,6 +5041,30 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Detach `node` from the slot's ancestor chain by rendering it into <body>
+     * (v1.7.0).
+     *
+     * The `conversation.input.overlay` slot lives inside the conversation area,
+     * and in DSH 0.2.2-rc.1 an ancestor there establishes a containing block, so
+     * the overlay's `position: fixed` resolved against that ancestor and the
+     * dialog could only appear at the bottom of the conversation. Portalling
+     * detaches it so it centres on the viewport. Returns the node unchanged when
+     * react-dom or a DOM is unavailable (the Node test harness), so the rendered
+     * tree keeps its shape there.
+     */
+    function portalize(node) {
+      const canPortal =
+        ReactDOM !== null &&
+        typeof ReactDOM.createPortal === 'function' &&
+        typeof document !== 'undefined' &&
+        document !== null &&
+        document.body !== undefined &&
+        document.body !== null
+      if (!canPortal) return node
+      return ReactDOM.createPortal(node, document.body)
+    }
+
+    /**
      * The dialog shell: a fixed overlay with an explicitly sized panel.
      *
      * The primitives Modal sizes itself to its content (fit-content); a wide
@@ -5007,15 +5095,18 @@ window.__ModuleLoader__.load({
           /* closing must never throw */
         }
       }
-      return h(
-        'div',
-        {
-          className: 'dsh-tokenlens-overlay',
-          role: 'presentation',
-          onMouseDown: (event) => {
-            if (event.target === event.currentTarget) close()
+      // v1.7.0: portal to <body> so the overlay centres on the viewport instead
+      // of resolving `position: fixed` against the conversation area.
+      return portalize(
+        h(
+          'div',
+          {
+            className: 'dsh-tokenlens-overlay',
+            role: 'presentation',
+            onMouseDown: (event) => {
+              if (event.target === event.currentTarget) close()
+            },
           },
-        },
         h(
           'div',
           {
@@ -5041,6 +5132,7 @@ window.__ModuleLoader__.load({
           ),
           h('div', { className: 'dsh-tokenlens-modal-body' }, children),
           footer === undefined || footer === null ? null : h('div', { className: 'dsh-tokenlens-modal-foot' }, footer),
+        ),
         ),
       )
     }
@@ -5956,6 +6048,83 @@ window.__ModuleLoader__.load({
           'data-details-window': windowKey,
         },
         children,
+      )
+    }
+
+    /**
+     * The output-speed (TPS) trend card (v1.7.0), shown under 明细.
+     *
+     * `tps` is output tokens over the model's OWN request time (`step/start` to
+     * `assistant/message`), so the step's tool calls do not dilute it — but
+     * reasoning tokens are included in "output", which the hint says.
+     */
+    function buildSpeedSection(state, ctx, t) {
+      const stats = ctx.stats
+      const scoped = ctx.providerScoped ? ctx.currentRow?.speed ?? null : stats?.speed ?? null
+      const series = scoped === null || scoped === undefined ? null : scoped
+      const byDay = series === null ? [] : series.byDay
+      const head = h(
+        'div',
+        { key: 'head', className: 'dsh-tokenlens-section-head' },
+        h(
+          'span',
+          { className: 'dsh-tokenlens-section-title' },
+          Icon('chart', 14),
+          t('statsSpeedTitle'),
+        ),
+        series !== null && series.total.tps !== null
+          ? h(
+              'span',
+              { className: 'dsh-tokenlens-hint', 'data-speed-total': String(series.total.tps) },
+              t('statsSpeedTotal', { tps: series.total.tps.toFixed(1) }),
+            )
+          : null,
+      )
+      const body =
+        byDay.length === 0
+          ? h(
+              'div',
+              { key: 'empty', className: 'dsh-tokenlens-chart-empty', 'data-speed-empty': 'true' },
+              h('span', { key: 'hint', className: 'dsh-tokenlens-hint' }, t('statsSpeedEmpty')),
+            )
+          : (() => {
+              const max = Math.max(...byDay.map((entry) => entry.tps ?? 0), 1)
+              const bars = byDay.map((entry, index) => {
+                const tps = entry.tps ?? 0
+                const height = Math.max(2, Math.round((tps / max) * 1000) / 10)
+                return h(
+                  'div',
+                  {
+                    key: `speed-${entry.day}-${index}`,
+                    className: 'dsh-tokenlens-chart-bar-wrap',
+                    'data-speed-day': entry.day,
+                    'data-speed-tps': String(tps),
+                    title: t('statsSpeedBarTitle', {
+                      date: entry.day,
+                      tps: tps.toFixed(1),
+                      tokens: formatTokensPrecise(entry.outputTokens),
+                      seconds: entry.seconds.toFixed(1),
+                    }),
+                  },
+                  h('div', {
+                    className: 'dsh-tokenlens-chart-bar',
+                    style: { height: `${height}%` },
+                    'aria-hidden': 'true',
+                  }),
+                )
+              })
+              return h(
+                'div',
+                { key: 'bars', className: 'dsh-tokenlens-chart-plot', 'data-speed-plot': 'true' },
+                h('div', { key: 'row', className: 'dsh-tokenlens-chart-bars' }, bars),
+              )
+            })()
+      return h(
+        'div',
+        { key: 'speed', className: 'dsh-tokenlens-section', 'data-speed-section': 'true' },
+        head,
+        h('div', { key: 'hint', className: 'dsh-tokenlens-subtitle' }, t('statsSpeedHint')),
+        body,
       )
     }
 
@@ -7421,6 +7590,12 @@ window.__ModuleLoader__.load({
           'div',
           { key: 'row-details', className: 'dsh-tokenlens-chart-layout-row' },
           buildStatsDetails(state, statsCtx, t),
+        ),
+        // v1.7.0: the output-speed trend sits under 明细, as its own full-width row.
+        h(
+          'div',
+          { key: 'row-speed', className: 'dsh-tokenlens-chart-layout-row' },
+          buildSpeedSection(state, statsCtx, t),
         ),
       )
       const body = [buildManageButton(state, t), statsArea]

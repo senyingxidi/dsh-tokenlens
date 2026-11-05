@@ -41,6 +41,11 @@ function headerEvent(seq, provider, model) {
   return { type: 'request/header', seq, time: 1_792_900_000_000 + seq, data: { header: { config: { provider, model } } } }
 }
 
+/** A `step/start` record: the model request's start instant (v1.7.0 TPS). */
+function stepStartEvent(seq, time, turn, step) {
+  return { type: 'step/start', seq, time, data: { turn, step } }
+}
+
 function sessionHeader(extra = {}) {
   return { type: 'session', version: 4, id: 'session-test', createdAt: 1_792_900_000_000, cwd: 'C:\\work', isSeeded: false, delegationDepth: 0, ...extra }
 }
@@ -451,7 +456,8 @@ test('cache file is written and reused by a second service instance', async (t) 
   assert.equal(result.allTime.total, 42)
   assert.equal(result.scan.reused, 1, 'an unchanged file comes from the persisted cache')
   const raw = JSON.parse(await readFile(join(dshHome, 'dsh-tokenlens', 'usage-cache.json'), 'utf8'))
-  assert.equal(raw.version, 5)
+  // v1.7.0 bumped the schema: the cache now carries per-day output-speed samples.
+  assert.equal(raw.version, 6)
   assert.ok(Object.keys(raw.files).length === 1)
 })
 
@@ -820,7 +826,67 @@ test('malicious provider ids cannot pollute Object.prototype', () => {
   assert.equal(Object.prototype.hasOwnProperty('input'), before !== undefined)
 })
 
-test('effective day is computed from the full history, not only the last 30 days', async (t) => {
+test('output speed (TPS) pairs step/start with assistant/message (v1.7.0)', async (t) => {
+  const dshHome = await mkdtemp(join(tmpdir(), 'tokenlens-tps-'))
+  t.after(() => rm(dshHome, { recursive: true, force: true }))
+  const base = todayAt(14)
+  await writeSession(dshHome, 'session-tps', [
+    sessionHeader(),
+    headerEvent(1, 'commandcode', 'deepseek-v4.1-flash'),
+    // Step 1: 100 output tokens over 2s -> 50 tok/s.
+    stepStartEvent(2, base, 1, 1),
+    usageEvent(3, base + 2000, { inputTokens: 10, outputTokens: 100, totalTokens: 110 }, { turn: 1, step: 1 }),
+    // Step 2: 300 output tokens over 1s -> 300 tok/s. Combined: 400 tok / 3s.
+    stepStartEvent(4, base + 3000, 1, 2),
+    usageEvent(5, base + 4000, { inputTokens: 10, outputTokens: 300, totalTokens: 310 }, { turn: 1, step: 2 }),
+    // Step 3 has no step/start: it must not contribute a bogus duration.
+    usageEvent(6, base + 6000, { inputTokens: 10, outputTokens: 999, totalTokens: 1009 }, { turn: 1, step: 3 }),
+  ])
+  const stats = createUsageStats({
+    dshHome,
+    config: { stats: { ttlMs: 0, harnesses: { dsh: true, zcode: false, opencode: false, workbuddy: false, qoder: false } } },
+    log: { info() {}, warn() {} },
+  })
+  const result = await stats.get()
+
+  assert.ok(result.speed, 'the wire carries a speed series')
+  assert.equal(result.speed.byDay.length, 1, 'one day with samples')
+  const day = result.speed.byDay[0]
+  assert.equal(day.outputTokens, 400, 'only paired steps count output')
+  assert.equal(day.seconds, 3, 'durations are summed in seconds')
+  assert.equal(day.tps, 133.3, '400 tokens over 3s')
+  assert.equal(day.steps, 2, 'two paired steps')
+  assert.equal(result.speed.total.tps, 133.3)
+
+  // The provider row carries its own series for the scope switch.
+  const provider = result.providers.find((row) => row.providerId === 'commandcode')
+  assert.ok(provider?.speed, 'the provider row carries a speed series')
+  assert.equal(provider.speed.total.tps, 133.3)
+  // The unpaired 999-token message never appears as speed: 400, not 1399.
+  assert.equal(provider.speed.total.outputTokens, 400, 'an unpaired message must not invent a duration')
+})
+
+test('a speed series with no paired steps is empty, not a crash (v1.7.0)', async (t) => {
+  const dshHome = await mkdtemp(join(tmpdir(), 'tokenlens-tps-empty-'))
+  t.after(() => rm(dshHome, { recursive: true, force: true }))
+  const base = todayAt(14)
+  await writeSession(dshHome, 'session-nostep', [
+    sessionHeader(),
+    headerEvent(1, 'commandcode', 'm1'),
+    usageEvent(2, base, { inputTokens: 10, outputTokens: 50, totalTokens: 60 }, { turn: 1, step: 1 }),
+  ])
+  const stats = createUsageStats({
+    dshHome,
+    config: { stats: { ttlMs: 0, harnesses: { dsh: true, zcode: false, opencode: false, workbuddy: false, qoder: false } } },
+    log: { info() {}, warn() {} },
+  })
+  const result = await stats.get()
+  assert.deepEqual(result.speed.byDay, [], 'no samples without step starts')
+  assert.equal(result.speed.total.tps, null, 'no rate rather than Infinity')
+  assert.equal(result.allTime.total, 60, 'tokens are still counted')
+})
+
+test('the 最近X天 window is capped at 30 days so label and numbers agree (v1.7.0)', async (t) => {
   const dshHome = await mkdtemp(join(tmpdir(), 'tokenlens-old-history-'))
   t.after(() => rm(dshHome, { recursive: true, force: true }))
   const old = Date.now() - 60 * 24 * 3600 * 1000
@@ -839,6 +905,17 @@ test('effective day is computed from the full history, not only the last 30 days
   const result = await stats.get()
   const provider = result.providers.find((row) => row.providerId === 'opencode-go')
   assert.ok(provider)
+  // The first record is still remembered (it dates the provider)…
   assert.equal(provider.effectiveDay, dayKey(old), 'first record can be older than 30 days')
-  assert.ok(provider.effectiveDays >= 60, `effectiveDays should cover the full history (got ${provider.effectiveDays})`)
+  // …but the window itself is capped, because the charts and the 最近30天 bucket
+  // only ever cover 30 days.
+  assert.equal(provider.effectiveDays, 30, 'the window is capped at 30 days')
+  // And the since-effective bucket describes that same 30-day span, not all time,
+  // so the 最近30天 label never sits above 60 days of tokens.
+  assert.equal(
+    provider.sinceEffective.total,
+    provider.last30Days.total,
+    'the bucket matches the window the label claims',
+  )
+  assert.ok(provider.allTime.total > provider.sinceEffective.total, 'all-time still carries the older record')
 })
