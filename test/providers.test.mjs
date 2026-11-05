@@ -251,6 +251,51 @@ test('a plan that reports its grant still wins over the derived pool', () => {
   assert.equal(parsed.windows.monthly.percent, 55)
 })
 
+test('the lagging usage summary is corrected by the live window spend (v1.6.7)', () => {
+  // `/alpha/usage/summary` is an aggregate and lags the rolling windows by a few
+  // cents. Taking the largest lower bound keeps the derived grant on the pool
+  // instead of a few cents under it.
+  const payload = {
+    credits: {
+      credits: { monthlyCredits: 68.7198210874, purchasedCredits: 0 },
+      // live spend is 1.2802…
+      windowLimits: {
+        limited: true,
+        fiveHour: { cap: 14, used: 1.2801789126, exceeded: false },
+        weekly: { cap: 35, used: 1.2801789126, exceeded: false },
+      },
+    },
+    // …while the summary still reports 1.1248
+    usageSummary: { totalMonthlyCredits: 1.1247504114 },
+  }
+  const parsed = parseCommandCode(payload, NOW)
+  assert.ok(Math.abs(parsed.windows.monthly.cap - 70) < 1e-6, `cap was ${parsed.windows.monthly.cap}, expected 70`)
+  assert.ok(
+    Math.abs(parsed.windows.monthly.percent - 1.8288) < 0.01,
+    `percent was ${parsed.windows.monthly.percent}, expected ~1.83`,
+  )
+})
+
+test('a window spend alone never sizes the month (v1.6.7)', () => {
+  // Without the summary there is no anchor: a weekly window that does not cover
+  // the whole period would inflate the grant and drive the percentage to ~0, so
+  // this case must stay null rather than invent a number.
+  const parsed = parseCommandCode(
+    {
+      credits: {
+        credits: { monthlyCredits: 68, purchasedCredits: 0 },
+        windowLimits: { limited: true, fiveHour: { cap: 14, used: 0.2 }, weekly: { cap: 35, used: 0.3 } },
+      },
+    },
+    NOW,
+  )
+  assert.equal(parsed.windows.monthly.percent, null)
+  // makeWindow omits `cap`/`used` entirely when they are unknown, rather than
+  // emitting a null the client would have to special-case.
+  assert.equal(parsed.windows.monthly.cap, undefined, 'no invented capacity')
+  assert.equal(parsed.windows.monthly.status, 'unknown')
+})
+
 test('plan labels are documented ids only; grants are never guessed', () => {
   assert.equal(commandcodePlanLabel('individual-go-v1'), 'Go')
   assert.equal(commandcodePlanLabel('individual-go'), 'Go')
