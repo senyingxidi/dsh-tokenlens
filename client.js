@@ -158,6 +158,7 @@ window.__ModuleLoader__.load({
       chipHint: '当前模型供应商的套餐用量，点击查看详情',
       chipUnavailable: '用量读取失败',
       chipNeedsConfig: '待配置',
+      chipStatsOnly: '仅本机统计',
       chipNoUsage: '暂无用量',
       chipRolling: '5时',
       chipWeekly: '周',
@@ -337,6 +338,11 @@ window.__ModuleLoader__.load({
       providerControlKeyHint: '本机 Open Design 登录后写在 ~/.amr/config.json 的 profiles.prod.controlKey；不是 Cloud API Keys 页的推理 Key',
       providerControlKeyPlaceholder: '粘贴 Control Key（保存后不再显示）',
       providerControlKeySaved: '已保存；要替换请重新粘贴',
+      providerConsoleCookie: '控制台 Cookie',
+      providerConsoleCookieHint:
+        '登录 platform.xiaomimimo.com 后，从浏览器开发者工具复制完整的 Cookie 请求头（含 api-platform_serviceToken 与 userId）。推理 Key 读不到额度接口；Cookie 约 24 小时后过期，过期后重新粘贴即可',
+      providerConsoleCookiePlaceholder: '粘贴控制台 Cookie（保存后不再显示）',
+      providerConsoleCookieSaved: '已保存；过期后重新粘贴以刷新',
       configureProvider: '去配置',
       errorOpenDesignConfig: 'Open Design 额度查询需要工作区 ID 与 Control Key（不是推理 Key）',
       designPlanLabel: '本期 Design Plan 累计',
@@ -421,6 +427,7 @@ window.__ModuleLoader__.load({
       chipHint: 'Plan usage for the selected provider — click for details',
       chipUnavailable: 'Usage unavailable',
       chipNeedsConfig: 'Needs setup',
+      chipStatsOnly: 'Local stats only',
       chipNoUsage: 'No usage',
       chipRolling: '5h',
       chipWeekly: 'wk',
@@ -601,6 +608,11 @@ window.__ModuleLoader__.load({
       providerControlKeyHint: 'Written to ~/.amr/config.json as profiles.prod.controlKey after signing in to Open Design; not the inference key from the Cloud API Keys page',
       providerControlKeyPlaceholder: 'Paste the Control Key (never shown again after saving)',
       providerControlKeySaved: 'Saved; paste again to replace it',
+      providerConsoleCookie: 'Console cookie',
+      providerConsoleCookieHint:
+        'Sign in at platform.xiaomimimo.com, then copy the full Cookie request header from your browser devtools (it carries api-platform_serviceToken and userId). The inference key cannot read the quota API, and the cookie expires after about 24 hours — just paste a fresh one when it does',
+      providerConsoleCookiePlaceholder: 'Paste the console cookie (never shown again after saving)',
+      providerConsoleCookieSaved: 'Saved; paste a fresh one when it expires',
       configureProvider: 'Configure',
       errorOpenDesignConfig: 'Open Design quota needs a workspace ID and a Control Key (not an inference key)',
       designPlanLabel: 'Period Design Plan',
@@ -1207,6 +1219,9 @@ window.__ModuleLoader__.load({
         // mere presence is the capability flag that renders the input.
         workspaceId,
         supportsWorkspaceId: Object.prototype.hasOwnProperty.call(raw, 'workspaceId'),
+        // v1.6.5: cookie-authenticated consoles (Xiaomi MiMo) reuse the same
+        // write-only secret slot, labelled as a cookie instead of a key.
+        supportsConsoleCookie: raw.supportsConsoleCookie === true,
       }
     }
 
@@ -3009,10 +3024,14 @@ window.__ModuleLoader__.load({
       if (label !== provider.label) update.label = label
       // v1.3.5: the workspace id of a workspace-scoped adapter; an empty string
       // clears the override so the Host falls back to its env var.
-      if (provider.supportsWorkspaceId === true) {
-        const wireWorkspaceId = typeof provider.workspaceId === 'string' ? provider.workspaceId : ''
-        const workspaceId = typeof source.workspaceId === 'string' ? source.workspaceId.trim() : wireWorkspaceId
-        if (workspaceId !== wireWorkspaceId) update.workspaceId = workspaceId
+      // v1.6.5: a console-cookie adapter (Xiaomi MiMo) has no workspace id but
+      // uses the same write-only secret slot, so it must send `apiKey` too.
+      if (provider.supportsWorkspaceId === true || provider.supportsConsoleCookie === true) {
+        if (provider.supportsWorkspaceId === true) {
+          const wireWorkspaceId = typeof provider.workspaceId === 'string' ? provider.workspaceId : ''
+          const workspaceId = typeof source.workspaceId === 'string' ? source.workspaceId.trim() : wireWorkspaceId
+          if (workspaceId !== wireWorkspaceId) update.workspaceId = workspaceId
+        }
         // v1.3.9: the Control Key is write-only. A typed value is sent once; an
         // empty draft means "leave the stored secret alone", never "clear it".
         const apiKey = typeof source.apiKey === 'string' ? source.apiKey.trim() : ''
@@ -3068,7 +3087,15 @@ window.__ModuleLoader__.load({
       if (field !== 'consoleUrl' && field !== 'shortLabel' && field !== 'label' && field !== 'workspaceId' && field !== 'apiKey') {
         return
       }
-      if ((field === 'workspaceId' || field === 'apiKey') && provider.supportsWorkspaceId !== true) return
+      // v1.6.5: a console-cookie adapter (Xiaomi MiMo) writes the same write-only
+      // secret slot, so it must be allowed to update `apiKey` as well.
+      if (
+        (field === 'workspaceId' || field === 'apiKey') &&
+        provider.supportsWorkspaceId !== true &&
+        provider.supportsConsoleCookie !== true
+      ) {
+        return
+      }
       if (provider === null || provider === undefined) return
       const current = store.get().management
       const draft = providerDraftOf(provider, current)
@@ -3735,9 +3762,29 @@ window.__ModuleLoader__.load({
       return canonicalProviderId(rawId) === 'open-design'
     }
 
+    /**
+     * Whether this state is a provider the plugin has NO usage adapter for
+     * (v1.6.5).
+     *
+     * `unsupported-provider` hides the chip by protocol, but the chip is also the
+     * ONLY entry point to the local-token statistics — and those are collected
+     * for every harness, adapter or not. Hiding it therefore made real data
+     * unreachable: selecting e.g. `xiaomi-token-plan-cn` showed nothing at all
+     * even though `usage-cache.json` held 319M tokens for it (GitHub issue #1).
+     * Such a provider keeps a chip that says 仅本机统计 and opens the dialog,
+     * whose stats sections do not depend on a snapshot.
+     */
+    function needsStatsEntry(state) {
+      if (normalizeSnapshot(state.snapshot) !== null) return false
+      return (
+        state.error !== null && typeof state.error === 'object' && state.error.code === 'unsupported-provider'
+      )
+    }
+
     /** Whether the chip must stay silent for this state. */
     function chipHidden(state) {
       if (!isHidden(state.error)) return false
+      if (needsStatsEntry(state) === true) return false
       return needsWorkspaceConfigEntry(state) !== true
     }
 
@@ -3846,7 +3893,11 @@ window.__ModuleLoader__.load({
       // A workspace-scoped provider missing its configuration reads as 「待配置」
       // instead of a read failure: nothing upstream failed, setup is incomplete.
       const needsConfig = needsWorkspaceConfigEntry(state)
-      const label = needsConfig ? t('chipNeedsConfig') : t('chipUnavailable')
+      // v1.6.5: an adapter-less provider is not a failure either — the plugin
+      // simply has no quota endpoint for it, while its local token statistics are
+      // real. Say 「仅本机统计」 so the chip reads as an entry point, not an error.
+      const statsOnly = needsStatsEntry(state)
+      const label = needsConfig ? t('chipNeedsConfig') : statsOnly ? t('chipStatsOnly') : t('chipUnavailable')
       return h(
         'span',
         { className: 'dsh-tokenlens-anchor', 'data-composer-stat': 'tokenlens' },
@@ -3862,9 +3913,10 @@ window.__ModuleLoader__.load({
               'aria-label': label,
               'aria-haspopup': 'dialog',
               ...(needsConfig ? { 'data-needs-config': 'true' } : {}),
+              ...(statsOnly ? { 'data-stats-only': 'true' } : {}),
               onClick: () => openDialog(sessionId),
             },
-            h('span', { className: 'dsh-tokenlens-dot', 'data-level': 'warning', 'aria-hidden': true }),
+            h('span', { className: 'dsh-tokenlens-dot', 'data-level': statsOnly ? 'normal' : 'warning', 'aria-hidden': true }),
             h('span', { className: 'dsh-tokenlens-brand' }, brand),
             h('span', { className: 'dsh-tokenlens-metric' }, label),
           ),
@@ -6381,7 +6433,21 @@ window.__ModuleLoader__.load({
               label: t('providerControlKey'),
               hint: t('providerControlKeyHint'),
             })
-          : null,
+          : // v1.6.5: Xiaomi MiMo's quota console is cookie-authenticated, so it gets
+            // the same write-only slot with a cookie-specific label and hint (the
+            // inference key is explicitly NOT usable, and the cookie expires daily).
+            provider.supportsConsoleCookie === true
+            ? buildProviderSecretField(provider, management, t, {
+                key: 'apiKey',
+                className: 'dsh-tokenlens-controlkey-input dsh-tokenlens-consolecookie-input',
+                dataAttr: 'data-provider-consolecookie',
+                field: 'apiKey',
+                placeholder:
+                  provider.hasKey === true ? t('providerConsoleCookieSaved') : t('providerConsoleCookiePlaceholder'),
+                label: t('providerConsoleCookie'),
+                hint: t('providerConsoleCookieHint'),
+              })
+            : null,
         buildProviderNameField(provider, management, t, {
           key: 'shortLabel',
           className: 'dsh-tokenlens-shortlabel-input',

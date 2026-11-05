@@ -45,7 +45,7 @@
 - **自动识别**：在 DSH「设置 → 模型服务」中配置过的供应商会自动出现在管理页，并按路由 id 或 baseURL 主机匹配内置用量适配器，自动继承 DSH 中的凭据，无需重复填写。
 - **Agent 工具**：注册 `tokenlens_usage`，模型可以自行查询套餐容量与本机用量。
 
-支持 5 个 Harness：**DSH、ZCode、OpenCode CLI、WorkBuddy / CodeBuddy CLI、Qoder CN CLI**；内置 25 家供应商元数据，其中 16 家带套餐 / 余额适配器。
+支持 5 个 Harness：**DSH、ZCode、OpenCode CLI、WorkBuddy / CodeBuddy CLI、Qoder CN CLI**；内置 28 家供应商元数据，其中 19 家带套餐 / 余额适配器。
 
 ## 效果截图
 
@@ -323,12 +323,16 @@ Control Key 是 **Open Design 桌面端/CLI 登录时写入本机的会话凭据
 | `zhipu-cn` | `GET https://open.bigmodel.cn/api/monitor/usage/quota/limit`（`ZHIPU_API_KEY`） | GLM Coding Plan：5 小时 / 本周 / 每月 百分比 + 方案 |
 | `volcengine` | Coding Plan / AgentPlan：`POST https://open.volcengineapi.com/?Action=GetCodingPlanUsage&Version=2024-01-01`（Signature V4，`VOLCENGINE_ACCESS_KEY_ID` + `VOLCENGINE_SECRET_ACCESS_KEY`） | 5 小时 / 本周 / 每月 百分比 + 档位 |
 | `open-design` | 只读计费接口：`GET …/api/v1/workspaces/{workspaceId}/wallet/balance`（钱包）+ `…/billing/funding-check`（Design Plan 窗口，位于 `codingPlan` 内）+ `/api/v1/billing/summary`（套餐档位），workspace ID + Control Key：`OPENDESIGN_CONTROL_KEY` / `VELA_CONTROL_KEY`，非推理 Key | Design Plan 的 5 小时 / 7 天 已用百分比 + 重置时间；套餐档位；钱包余额（USD） |
+| `xiaomi-token-plan-cn` / `-ams` / `-sgp` | 控制台额度接口：`GET https://platform.xiaomimimo.com/api/v1/tokenPlan/usage` + `/tokenPlan/detail`（周期结束时间、方案码）+ `/api/v1/balance`（人民币余额）。**只认控制台 Cookie**（`XIAOMI_MIMO_COOKIE`），推理 Key 一律 401 | Token Plan 的每月 已用百分比 + 重置时间；方案码；账户余额（CNY） |
 
 - OpenCode 的额度定义见[官方文档](https://opencode.ai/docs/go/#usage-limits)（5h = 月度额度的 20%、周 = 50%、月 = 100%）；接口只返回百分比，插件也只画百分比。
 - Command Code 的 `/alpha/*` 是官方 CLI 自用的私有计费路由；免费 / 无方案账户返回空窗口（显示 `—`），插件不会用方案目录猜额度。
 - Open Design 的窗口按账户实际返回的时长渲染：Go 同时有 5 小时和 7 天窗口，Plus / Pro / Max 只有 7 天窗口；钱包余额是独立于窗口的 USD 额度，用尽后继续扣钱包。查询要求工作区权限，鉴权失败会明确显示错误而不是 0。**只需填一个 Control Key**：工作区 ID 是可选项（v1.5.3），插件会用 Key 调 `/api/v1/workspaces/current` 自动识别你的工作区；只有账号有多个工作区、需要指定其中一个时才在管理页填「工作区 ID」。真正缺 Key 时弹窗会指出并给出「去配置」入口。窗口、余额、套餐档位是**三层独立读取**（v1.4.0）：任一接口不可用时只少那一块数据，不会整套报错。
 - **chip 的「月 N%」与「本期 Design Plan 累计」是插件本机算的估算值**（v1.5.0 / v1.6.0）。Open Design 有月度额度（Go 为每月 $120 = 4 × 每周 $30），但**没有「本账期已用」接口**——控制台的 `/billing/usage`、`/billing/coding-plan-usage` 都靠浏览器 Cookie 鉴权，Control Key 一律 401。于是插件累加它观测到的 **7 天窗口**（只记 7 天，因为 5 小时窗口测量的是同一笔消耗，相加会重复计数）。
-- **金额按官方定价表的模型单价计算**（v1.6.0）。原来用 `usedCredits ÷ creditsPerUsd`，隐含「按 1× 倍率消耗」，而官方倍率跨度 0.25×–4×，对 DeepSeek V4.1 Flash（0.5×）会少算一半、对 GPT-6 Luna（4×）会多算 4 倍。现在按每个模型的实际 Token × 官方单价（输入/输出/缓存读分别计价）累加，弹窗显示「已用 / 月额度 + 百分比」（如 `$27.31 / $120.00 22.8%`）并注明「按 0.5× 倍率模型计价」——**只用 0.5× 模型可用满完整 $120**，1× 只能到 $60，2× 到 $30，4× 到 $15。弹窗会标注覆盖情况（「已覆盖本账期全部窗口」或「仅统计已观测的 N 个窗口」）；覆盖不完整时百分比仍显示但**不会触发告警配色**，插件没运行期间错过的窗口无法计入。
+- **金额按服务端 credits 反推，只统计 Design Plan 额度消耗**（v1.6.4）。钱包扣费不消耗 credits，只扣 `balanceUsd`，所以「本期 Design Plan 累计」= `usedCredits ÷ creditsPerUsd ÷ 倍率`——实测 `150,005 ÷ 10,000 ÷ 0.5 = $30.00`，与「周额度 $30 × 已用 100%」交叉验证一致。含钱包付费的本机估算另存为 `localPricedUsd`，高于前者时弹窗追加「另有 $X 由账户余额支付，未计入」，两个口径都清楚可查。
+- **月额度的分母随倍率变化**（v1.6.0 / v1.6.2）。官方定价表把月额度写成**列表价美元**且按倍率消耗：只用 0.5× 模型（如 DeepSeek V4.1 Flash）可动用**完整 $120**，1× 用 $60，2× 用 $30，4× 用 $15。混合用量按实际消耗的 credits 加权取等效倍率（`$60 ÷ m_eff`），而不是简单取最高倍率——否则偶尔用一次 4× 模型就会把额度误报成 $15。弹窗注明「按 X× 倍率模型计价」以及覆盖情况（「已覆盖本账期全部窗口」或「仅统计已观测的 N 个窗口」）；覆盖不完整时百分比仍显示但**不会触发告警配色**。
+- **没有额度适配器的供应商也会保留芯片**（v1.6.5）。`unsupported-provider` 原本静默隐藏芯片，但芯片是本机 Token 统计的唯一入口，于是「有数据却看不到」（如小米 MiMo 账户里有 3 亿 Token 却无处可查）。现在这类供应商显示「**仅本机统计**」芯片，点开即见统计区；本机统计对所有 Harness 都会采集，与该供应商有没有额度接口无关。
+- **小米 MiMo 的额度接口只认控制台 Cookie**（v1.6.5）。推理 Key（`tp-…`）读不到额度接口，插件复用「写一次、永不回显」的密码输入位保存 Cookie，并明确提示约 24 小时过期。会话过期会显示可操作的中文指引，而不是报错码；未配置 Cookie 时不发任何网络请求。
 - 未配置凭据的供应商 chip 静默隐藏；`zai`、`minimax`、`deepinfra` 属 best-effort 适配（未公开接口，失败时按可重试错误优雅降级）。
 - 各供应商的元数据（`kind` / `label` / `shortLabel` / `baseURL` / `apiKeyRef` / `consoleUrl`）集中在 `lib/providers.mjs` 的 `PROVIDER_DEFAULTS` 与 `ADAPTERS` 中，新增适配器只需在该文件登记并补测试。
 
@@ -440,7 +444,7 @@ Host 半注册 `tokenlens_usage`，参数 `action`（默认 `snapshot`）与可�
 
 ## 验证
 
-- `node --test`：**332 个自动化用例**，覆盖 Host 数据层、供应商适配器、统计折叠、各 harness 读取、Design Plan 周期账本与官方单价计价、窗口锚点切片、工作区自动识别、插件集成与浏览器端渲染 / 交互。
+- `node --test`：**352 个自动化用例**，覆盖 Host 数据层、供应商适配器（含小米 MiMo 控制台 Cookie 适配器）、统计折叠、各 harness 读取、Design Plan 周期账本与额度计价、窗口锚点切片、工作区自动识别、插件集成与浏览器端渲染 / 交互。
 - 在真实环境中验证过 **5 个 harness** 的数据源；本机统计与独立的 SQLite 查询、独立的日志解析逐项对账（差额为 0），跨 harness 合并与供应商映射算术自洽。
 - 供应商接口按各官方文档与参考客户端行为验证；未配置凭据时 chip 静默隐藏，接口异常时按可重试错误降级。
 

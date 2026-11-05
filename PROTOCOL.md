@@ -439,10 +439,19 @@ with `[path]`.
 
 Client behaviour:
 
-- `missing-key`, `unsupported-provider`, `disabled` → hide the chip (silent).
-  The one exception (v1.3.5): a provider whose Host payload carries a `workspaceId`
-  field (Open Design) keeps a 「待配置 / Needs setup」 chip on `missing-key`, because
-  hiding it would leave no way to reach the dialog's configuration guidance.
+- `missing-key`, `disabled` → hide the chip (silent).
+- `unsupported-provider` (v1.6.5) → keep a 「仅本机统计 / Local stats only」 chip in a
+  **normal** dot state. Rationale: the chip is the only entry point to the local
+  token statistics, and those are collected for every harness regardless of
+  whether an adapter exists. Hiding the chip made real data unreachable — the
+  exact complaint in GitHub issue #1, where `xiaomi-token-plan-cn` had 319M
+  tokens in `usage-cache.json` and no way to view them. The dialog's stats
+  sections (`buildStatsSummary` / `buildStatsDetails`) do not depend on
+  `snapshot`, so they render normally with `snapshot: null`.
+- `missing-key` for a workspace-scoped provider (v1.3.5): a provider whose Host
+  payload carries a `workspaceId` field (Open Design) keeps a 「待配置 / Needs setup」
+  chip, because hiding it would leave no way to reach the dialog's configuration
+  guidance.
 - everything else → show the chip in a warning state with a retry action.
 
 ## Provider selection (client side)
@@ -515,6 +524,29 @@ again; such providers can still be overridden explicitly from the page (the over
   `VOLCENGINE_ACCESS_KEY_ID` / `VOLCENGINE_SECRET_ACCESS_KEY` (environment or credential service); an Ark
   API key cannot query plan quota. Responses (`Result.QuotaUsage[]` or `Result.AFP*`) normalize to the
   canonical 5h/weekly/monthly windows. Missing AK/SK produce a `missing-key` error, never a silent zero.
+- `xiaomi-token-plan-cn` / `-ams` / `-sgp` (v1.6.5): the quota lives on Xiaomi's **console** host, not the
+  inference host, and it authenticates with **browser session cookies only**:
+
+  | route | returns |
+  | --- | --- |
+  | `GET https://platform.xiaomimimo.com/api/v1/tokenPlan/usage` | `data.usage.items[].plan_total_token` / `compensation_total_token` (`{used, limit, percent}`), `data.monthUsage.items[].month_total_token` |
+  | `GET https://platform.xiaomimimo.com/api/v1/tokenPlan/detail` | `planCode`, `currentPeriodEnd`, `expired` |
+  | `GET https://platform.xiaomimimo.com/api/v1/balance` | account balance (CNY) |
+
+  The inference key (`tp-…`) is rejected with `401 {"code":401,"loginUrl":"https://account.xiaomi.com/pass/serviceLogin?...&sid=api-platform..."}` —
+  verified live against all three routes (they exist; only the success shape is untested, since it needs a
+  signed-in account). The cookie (`api-platform_serviceToken` + `userId`) is entered on the management page
+  in the same write-only secret slot Open Design uses for its Control Key, labelled 控制台 Cookie, and lasts
+  about 24 hours. `normalizeCookie` accepts a bare pair list, a `Cookie:` header, or a multi-line paste
+  (newlines are collapsed, because a newline inside a header value is an injection hazard).
+
+  Normalization rules: `monthUsage` wins as the monthly window; `resetsAt` comes from `currentPeriodEnd`;
+  a `401` — whether from the HTTP status or from a `loginUrl` anywhere in the body — maps to
+  `unauthorized` (not retryable) with paste instructions; no cookie produces `missing-key` **without any
+  network read**; an unparsable payload produces `parse` naming the fields it did see. When Xiaomi lists
+  several `plan_total_token` rows that all carry the same non-zero `limit` (one per day/model), the limit is
+  counted once while `used` is summed — otherwise the allowance would be inflated. `rolling` and `weekly`
+  stay `null`: Xiaomi reports one monthly allowance and the plugin never invents windows.
 
 ### Automatic DSH provider sync (v0.18.0)
 

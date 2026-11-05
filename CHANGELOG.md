@@ -4,6 +4,19 @@
 
 **版本记录约定**：同一发布日只保留一个章节，标题取当日**最后一个**已发布版本号；当日多次发布的改动合并到该章节，并在标题下注明当日实际发布过的版本号（npm 上仍可安装这些独立版本）。若当日已有发布，后续小改动不再单独增加版本号，而是并入下一篇日志。这样日志按天规整、不出现同日多个小版本。
 
+## 1.6.5 — 2026-11-05
+
+（当日已发布版本：v1.6.5。修复 GitHub issue #1）
+
+- **fix(ui): 没有额度适配器的供应商不再隐藏芯片**——`unsupported-provider` 按协议会静默隐藏芯片，但芯片同时是**本机 Token 统计的唯一入口**，于是「有数据却永远看不到」：选中 `xiaomi-token-plan-cn` 时 `usage-cache.json` 里躺着 3.19 亿 Token 却无处可查（issue #1 的核心投诉）。现在这类供应商保留一个「**仅本机统计**」芯片（圆点为正常态而非告警），点开即见统计区——统计区本就不依赖快照
+- **feat(providers): 新增小米 MiMo「Token Plan」额度适配器**（`xiaomi-token-plan-cn` / `-ams` / `-sgp` 三个区域）——额度接口在控制台域 `platform.xiaomimimo.com`：`/api/v1/tokenPlan/usage`（`plan_total_token` 与 `monthUsage`）、`/api/v1/tokenPlan/detail`（`planCode`、`currentPeriodEnd`）、`/api/v1/balance`（人民币余额）
+- feat(providers): **该接口只认控制台 Cookie**，推理 Key（`tp-…`）一律 401 + `loginUrl`。插件复用 Open Design 那套「写一次、永不回显」的密码输入位来存 Cookie，文案明确告知「推理 Key 读不到额度接口」与「Cookie 约 24 小时过期」
+- feat(providers): 会话过期映射为 `unauthorized`（不可重试）并给出可操作指引；未配置 Cookie 时**不发任何网络请求**，直接 `missing-key`
+- feat(providers): 同日多条 `plan_total_token` 共享同一份额度时只计一次（避免把额度翻倍），用量按条累加；无法识别的报文降级为 `parse` 并回显**实际看到的字段名**便于排查
+- feat(providers): 月度窗口优先取 `monthUsage`，`resetsAt` 取 `currentPeriodEnd`，**绝不凭空编造 5 小时/周窗口**；余额读取失败只影响余额本身，不影响额度
+- 测试：336 → 352（Cookie 归一化含多行注入折叠、信封解析、共享额度不翻倍、401/`loginUrl` 双路识别、缺 Cookie 零请求、未知报文降级、控制台 Cookie 输入框渲染与写一次、无适配器芯片可见且统计区可达）
+- **实测确认**（本机 2026-11-05）：三个端点均真实存在（非 404），匿名请求返回文档记载的 `{"code":401,"loginUrl":…}`，适配器正确映射为可操作指引。**成功响应的字段解析无法实测**（本机无小米账号），仅按两份独立实现（OmniRoute #14834、CodexBar `docs/mimo.md`）转录
+
 ## 1.6.4 — 2026-11-04
 
 （当日已发布版本：v1.6.2 / v1.6.4。v1.6.1 的混合模型修复未单独发版，已并入本节）

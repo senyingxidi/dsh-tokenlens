@@ -84,7 +84,7 @@ export const inject = []
 export const PLUGIN_NAME = 'dsh-tokenlens'
 
 /** Plugin version; mirrors package.json (kept here so diagnostics need no fs read). */
-export const PLUGIN_VERSION = '1.6.4'
+export const PLUGIN_VERSION = '1.6.5'
 
 /** Documented defaults; every field of the raw row config is optional. */
 const DEFAULTS = {
@@ -788,6 +788,10 @@ export function apply(ctx, rawConfig) {
       // v1.3.5: only adapters whose defaults declare a workspace (Open Design)
       // advertise the field, so the management page renders it exactly there.
       const supportsWorkspaceId = Object.prototype.hasOwnProperty.call(PROVIDER_DEFAULTS[id], 'workspaceId')
+      // v1.6.5: cookie-authenticated consoles (Xiaomi MiMo) advertise the same
+      // write-only secret field, but label it as a cookie so the hint can explain
+      // why a key will not work and that it expires daily.
+      const supportsConsoleCookie = PROVIDER_DEFAULTS[id].supportsConsoleCookie === true
       providers.push({
         providerId: id,
         label: provider.label,
@@ -802,6 +806,7 @@ export function apply(ctx, rawConfig) {
         ...(supportsWorkspaceId
           ? { workspaceId: typeof provider.workspaceId === 'string' ? provider.workspaceId : '' }
           : {}),
+        ...(supportsConsoleCookie ? { supportsConsoleCookie: true } : {}),
         builtin: true,
         // Configured through DSH model settings: the management page should
         // inherit the key/base URL instead of asking for them again.
@@ -1196,6 +1201,39 @@ export function apply(ctx, rawConfig) {
       // An empty workspaceId is fine: the adapter resolves it from the key.
       provider = { ...provider, workspaceId, controlKey }
       keyInfo = { ref: controlRef, source: controlSource, detail: controlDetail }
+    } else if (PROVIDER_DEFAULTS[id]?.supportsConsoleCookie === true) {
+      // v1.6.5: Xiaomi MiMo's quota console takes a browser session cookie, not a
+      // key (the inference key answers 401 with a `loginUrl`). Resolution mirrors
+      // the Open Design Control Key: the management page's write-only secret slot
+      // first, then the named ref, then the env var.
+      const refs = []
+      for (const ref of [provider.consoleCookieRef, 'XIAOMI_MIMO_COOKIE']) {
+        if (typeof ref === 'string' && ref.trim() !== '' && !refs.includes(ref.trim())) refs.push(ref.trim())
+      }
+      let cookie = typeof provider.apiKey === 'string' ? provider.apiKey.trim() : ''
+      let cookieRef = refs[0] ?? 'XIAOMI_MIMO_COOKIE'
+      let cookieSource = cookie === '' ? 'none' : 'config'
+      let cookieDetail = cookie === '' ? 'no Xiaomi MiMo console cookie configured' : 'plugin config'
+      if (cookie === '') {
+        for (const ref of refs) {
+          const resolved = await resolveApiKey({
+            config: { apiKeyRef: ref },
+            credentials: ctx.get('credentials'),
+            env: process.env,
+          })
+          const value = typeof resolved.value === 'string' ? resolved.value.trim() : ''
+          if (value === '') continue
+          cookie = value
+          cookieRef = resolved.ref ?? ref
+          cookieSource = resolved.source
+          cookieDetail = resolved.detail
+          break
+        }
+      }
+      // An empty cookie is passed through: the adapter raises the actionable
+      // `missing-key` message that names the console and the 24h lifetime.
+      provider = { ...provider, consoleCookie: cookie }
+      keyInfo = { ref: cookieRef, source: cookieSource, detail: cookieDetail }
     } else if (typeof provider.apiKeyRef === 'string' && provider.apiKeyRef.trim() !== '') {
       const key = await resolveApiKey({
         config: { apiKeyRef: provider.apiKeyRef, apiKey: provider.apiKey ?? '' },

@@ -23,7 +23,7 @@ Everything is computed locally: zero runtime dependencies, no external database,
 - **Data and chart modes** — tables, a daily trend chart and ring charts with breakdowns by harness, provider, top model and unmapped providers. In chart mode, clicking a day's bar drills into that day's 24 hourly bars; the 明细 rings switch between today / last 7 days / last X days (or last 30 days) / all time.
 - **Provider management page** — enabled / built-in / all filters, enable switches, credential status, console links, label editing, connection tests, subscription badges and plugin settings (label style, default view/scope, details expansion, default 明细 donut window, startup update check — on by default — with a "check now" action).
 - **Auto-discovery and agent tool** — providers configured in DSH Settings → Model Services are detected by route id or base-URL host and reuse their DSH credentials; `tokenlens_usage` lets the model query snapshots, local stats and diagnostics.
-- **Local-only** — 5 harnesses (DSH, ZCode, OpenCode CLI, WorkBuddy / CodeBuddy CLI, Qoder CN CLI), 25 built-in providers (16 with plan / balance adapters), read-only local data, no telemetry.
+- **Local-only** — 5 harnesses (DSH, ZCode, OpenCode CLI, WorkBuddy / CodeBuddy CLI, Qoder CN CLI), 28 built-in providers (19 with plan / balance adapters), read-only local data, no telemetry.
 
 ## Screenshots
 
@@ -144,7 +144,7 @@ Host bridge route: `/api/tokenlens`; agent tool: `tokenlens_usage`.
 
 ## Development
 
-Node.js ≥ 24, zero runtime dependencies: `node --test` runs the 280 tests.
+Node.js ≥ 24, zero runtime dependencies: `node --test` runs the 352 tests.
 
 Release: `node scripts/bump-version.mjs <version> "<note>"` updates `package.json`, `PLUGIN_VERSION` and `CHANGELOG.md`; see [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 

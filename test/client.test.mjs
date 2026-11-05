@@ -1158,7 +1158,73 @@ test('switching providers refetches and drops the previous numbers', async () =>
   }
 })
 
-test('unsupported-provider hides the chip silently', async () => {
+test('a console-cookie provider gets a masked cookie field, not a key field (v1.6.5)', async () => {
+  // Xiaomi MiMo's quota API is cookie-authenticated, so the management page must
+  // ask for a Cookie header, say the inference key will not work, and warn that
+  // it expires. The value stays write-only like the Control Key.
+  const updates = []
+  const payload = () =>
+    providersFixture({
+      providers: [
+        providerEntry({ subscribed: true }),
+        providerEntry({
+          providerId: 'xiaomi-token-plan-cn',
+          label: 'Xiaomi MiMo',
+          shortLabel: 'MiMo',
+          hasKey: false,
+          keySource: 'none',
+          baseURL: 'https://token-plan-cn.xiaomimimo.com',
+          apiKeyRef: 'XIAOMI_MIMO_COOKIE',
+          consoleUrl: 'https://platform.xiaomimimo.com',
+          supportsConsoleCookie: true,
+          dshManaged: false,
+        }),
+      ],
+    })
+  const plugin = loadPlugin((call) => {
+    if (call.action === 'hello') return { ok: true }
+    if (call.action === 'stats') return { ok: true, stats: statsFixture() }
+    if (call.action === 'providers') return payload()
+    if (call.action === 'providerUpdate') {
+      updates.push(call)
+      return payload()
+    }
+    return { ok: true, snapshot: snapshotFixture(call.providerId) }
+  })
+  try {
+    let tree = await settleManagementAll(plugin)
+    // An unconfigured provider lives behind the 全部 filter tab.
+    tree = switchProviderFilter(plugin, tree, 'all')
+    tree = expandPresetSection(plugin, tree)
+    tree = expandProvider(plugin, tree, 'xiaomi-token-plan-cn')
+    const input = providerInputOf(tree, 'data-provider-consolecookie', 'xiaomi-token-plan-cn')
+    assert.ok(input, 'the console-cookie input is rendered')
+    assert.equal(input.props.type, 'password', 'the cookie is masked')
+    assert.equal(input.props.value, '', 'the Host never echoes a stored secret back')
+    const text = textOf(tree)
+    assert.match(text, /控制台 Cookie/, 'the field is labelled as a console cookie')
+    assert.match(text, /推理 Key 读不到额度接口/, 'the hint warns that an inference key cannot work')
+    assert.match(text, /24 小时/, 'the hint states the cookie lifetime')
+
+    // It is the same write-only slot: typing sends `apiKey` exactly once.
+    input.props.onChange({ target: { value: '  api-platform_serviceToken=abc; userId=1  ' } })
+    tree = renderDialog(plugin)
+    const saveButton = editorButtonOf(tree, 'dsh-tokenlens-save')
+    assert.equal(saveButton.props.disabled, false, 'a typed cookie enables the save button')
+    saveButton.props.onClick()
+    await settle()
+    assert.equal(updates.length, 1, 'one update is sent')
+    assert.deepEqual(updates[0].update, { apiKey: 'api-platform_serviceToken=abc; userId=1' })
+    assert.equal(updates[0].providerId, 'xiaomi-token-plan-cn')
+  } finally {
+    plugin.dispose()
+  }
+})
+
+test('unsupported-provider keeps a "local stats only" chip so the stats stay reachable (v1.6.5)', async () => {
+  // GitHub issue #1: an adapter-less provider used to hide the chip silently, but
+  // the chip is the ONLY entry point to the local token statistics — so 319M
+  // tokens of real data became unreachable while that provider was selected.
   const plugin = loadPlugin((payload) =>
     payload.action === 'hello'
       ? { ok: true }
@@ -1170,12 +1236,37 @@ test('unsupported-provider hides the chip silently', async () => {
   )
   try {
     const tree = await settleChip(plugin, 'mystery')
-    assert.equal(tree, null, 'the chip is hidden for unsupported-provider')
+    assert.notEqual(tree, null, 'the chip must NOT be hidden for unsupported-provider')
+    const text = textOf(tree)
+    assert.match(text, /仅本机统计/, 'it says the plugin only has local statistics here')
     assert.equal(
       plugin.calls.some((call) => call.payload.providerId === 'mystery'),
       true,
       'the provider was still reported to the Host',
     )
+  } finally {
+    plugin.dispose()
+  }
+})
+
+test('an unsupported provider opens the dialog and its local stats sections render', async () => {
+  // The chip is only useful if it actually leads to the statistics.
+  const plugin = loadPlugin((payload) => {
+    if (payload.action === 'hello') return { ok: true }
+    if (payload.action === 'stats') return { ok: true, stats: statsFixture() }
+    if (payload.action === 'providers') return providersFixture()
+    return {
+      ok: false,
+      error: { code: 'unsupported-provider', message: 'provider "mystery" has no usage adapter', retryable: false },
+      snapshot: null,
+    }
+  })
+  try {
+    const tree = await settleDataDialog(plugin, 'mystery')
+    const text = textOf(tree)
+    // The stats summary + details are snapshot-independent, so they still render.
+    assert.match(text, /本机 Token 用量/, 'the local token section is reachable')
+    assert.match(text, /按 Harness/, 'the per-harness breakdown rendered')
   } finally {
     plugin.dispose()
   }
