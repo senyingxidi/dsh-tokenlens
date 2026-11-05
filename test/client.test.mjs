@@ -1710,12 +1710,10 @@ test('open-design puts the period estimate in the monthly chip percentage (v1.5.
     const text = textOf(chip)
     assert.match(text, /月 8\.8%/, 'the chip shows the monthly percentage')
     assert.match(text, /周 35%|周 34%/, 'the weekly window still renders')
-    const tooltip = findElement(chip, (element) => element.props?.side === 'top')
-    assert.match(
-      String(tooltip.props.label),
-      /本月 8\.8%/,
-      'the hover detail carries the monthly percentage too',
-    )
+    // v1.7.1: the hover detail is a NATIVE title on the button (a Tooltip bubble
+    // overflowed narrow docks and flickered the conversation area).
+    const button = findElement(chip, (element) => element.props?.className === 'dsh-tokenlens-chip')
+    assert.match(String(button.props.title), /本月 8\.8%/, 'the hover detail carries the monthly percentage too')
 
     // The dialog shows the monthly row with the period reset date.
     const tree = await settleDialog(plugin, 'open-design')
@@ -1739,11 +1737,14 @@ test('a windows provider with a wallet balance shows it in the capacity card and
     const chip = await settleChip(plugin, 'open-design')
     const button = findElement(chip, (element) => element.props?.className === 'dsh-tokenlens-chip')
     assert.ok(button, 'the chip renders')
-    assert.doesNotMatch(textOf(button), /12\.34/, 'the chip body does not repeat the balance')
-    const tooltip = findElement(chip, (element) => element.props?.side === 'top')
-    assert.ok(tooltip, 'the chip carries a hover tooltip')
-    assert.match(String(tooltip.props.label), /Open Design · 5 小时 12% · 本周 34% · 本月 — · \$12\.34$/)
-    assert.match(textOf(chip), /\$12\.34/, 'the balance is part of the chip hover detail')
+    // textOf() also reads props.title, so check the visible metric pieces only.
+    const visible = findAll(button, (element) => element.props?.className === 'dsh-tokenlens-metric')
+      .map((element) => textOf(element))
+      .join('')
+    assert.doesNotMatch(visible, /12\.34/, 'the chip body does not repeat the balance')
+    // v1.7.1: the hover detail is the button's native title (no Tooltip bubble).
+    assert.match(String(button.props.title), /Open Design · 5 小时 12% · 本周 34% · 本月 — · \$12\.34$/)
+    assert.match(String(button.props.title), /\$12\.34/, 'the balance is part of the chip hover detail')
 
     // Dialog: the balance is one extra row of the 套餐容量 card, after the windows.
     const tree = await settleDialog(plugin, 'open-design')
@@ -4098,7 +4099,42 @@ test('the dialog uses a balanced no-scrollbar two-row layout', () => {
   assert.match(source, /@media \(max-width:680px\)\{\.dsh-tokenlens-providers\{grid-template-columns:minmax\(0,1fr\)\}/, 'the provider grid collapses to one column when narrow')
 })
 
-test('the output-speed (TPS) trend renders under the details (v1.7.0)', async () => {
+test('the chip uses a native title and the speed card is full width (v1.7.1)', async () => {
+  // Two layout-safety guarantees:
+  //  - the chip must not mount a Tooltip bubble, which overflowed a narrow dock,
+  //    added a horizontal scrollbar and flickered the conversation area;
+  //  - the TPS card must stretch like the details card (flex 1 1 100%).
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert.doesNotMatch(
+    source,
+    /h\(\s*Tooltip,\s*\{\s*label:\s*(?:tooltip|label)/,
+    'the chip no longer wraps itself in the platform Tooltip',
+  )
+  assert.match(
+    source,
+    /className: 'dsh-tokenlens-chip',\s*\n\s*title: tooltip,/,
+    'the chip carries its detail as a native title instead',
+  )
+  assert.match(
+    source,
+    /\.dsh-tokenlens-chart-layout-row>\.dsh-tokenlens-section\[data-speed-section\]\{flex:1 1 100%;min-width:0\}/,
+    'the speed card is as wide as the details card',
+  )
+  assert.match(source, /\.dsh-tokenlens-speed-svg\{[^}]*width:100%/, 'the curve fills its card width')
+
+  // Behaviourally the chip still renders and still opens the dialog.
+  const plugin = loadPlugin()
+  try {
+    const chip = await settleChip(plugin, 'opencode-go')
+    const button = findElement(chip, (element) => element.props?.className === 'dsh-tokenlens-chip')
+    assert.ok(button, 'the chip renders without a Tooltip wrapper')
+    assert.equal(typeof button.props.title, 'string', 'the hover detail is a title string')
+  } finally {
+    plugin.dispose()
+  }
+})
+
+test('the output-speed (TPS) trend renders as a line under the details (v1.7.1)', async () => {
   const plugin = loadPlugin()
   try {
     const tree = await settleDataDialog(plugin, 'opencode-go')
@@ -4107,12 +4143,24 @@ test('the output-speed (TPS) trend renders under the details (v1.7.0)', async ()
     const text = textOf(section)
     assert.match(text, /输出速度（TPS）/, 'it is labelled')
     assert.match(text, /均值 77\.8 tok\/s/, 'the provider-scoped overall rate is stated')
-    // One bar per day, scaled by tps and carrying the raw numbers in its tooltip.
-    const bars = findAll(section, (element) => element.props?.['data-speed-day'] !== undefined)
-    assert.equal(bars.length, 2, 'one bar per day with samples')
-    assert.equal(bars[0].props['data-speed-tps'], '100', 'the peak day keeps its rate')
-    assert.match(String(bars[0].props.title), /2026-10-24 · 100\.0 tok\/s/, 'the tooltip names day + rate')
-    assert.match(String(bars[0].props.title), /2\.000K 输出 ÷ 20\.0s/, 'the tooltip shows the raw division')
+
+    // v1.7.1: a curve, not bars — one polyline plus a filled area.
+    const line = findElement(section, (element) => element.props?.className === 'dsh-tokenlens-speed-line')
+    assert.ok(line, 'the trend is a polyline')
+    assert.equal(String(line.props.fill), 'none', 'the line itself is not filled')
+    const area = findElement(section, (element) => element.props?.className === 'dsh-tokenlens-speed-area')
+    assert.ok(area, 'a soft area sits under the curve')
+    const svg = findElement(section, (element) => element.props?.className === 'dsh-tokenlens-speed-svg')
+    assert.ok(svg, 'the chart is one inline SVG')
+    assert.equal(String(svg.props.preserveAspectRatio), 'none', 'it fills the card width without distortion of the box')
+
+    // Each day keeps a transparent hover column carrying the raw numbers.
+    const columns = findAll(section, (element) => element.props?.['data-speed-day'] !== undefined)
+    assert.equal(columns.length, 2, 'one hover column per day with samples')
+    assert.equal(columns[0].props['data-speed-tps'], '100', 'the peak day keeps its rate')
+    const tip = findElement(columns[0], (element) => element.type === 'title')
+    assert.match(textOf(tip), /2026-10-24 · 100\.0 tok\/s/, 'the tooltip names day + rate')
+    assert.match(textOf(tip), /2\.000K 输出 ÷ 20\.0s/, 'the tooltip shows the raw division')
   } finally {
     plugin.dispose()
   }
@@ -4210,7 +4258,12 @@ test('the dialog and management page render inline SVG icons and provider avatar
   const plugin = loadPlugin()
   try {
     const usage = await settleDataDialog(plugin, 'opencode-go')
-    const svgs = findAll(usage, (element) => element.type === 'svg')
+    // v1.7.1: the TPS trend is also an inline SVG, but it is a chart (role="img",
+    // visible stroke), not a decorative icon — so only icons are audited here.
+    const svgs = findAll(
+      usage,
+      (element) => element.type === 'svg' && element.props?.className === 'dsh-tokenlens-icon',
+    )
     assert.ok(svgs.length >= 8, `the dialog carries a set of inline icons (found ${svgs.length})`)
     for (const svg of svgs) {
       assert.equal(svg.props['aria-hidden'], 'true', 'icons are decorative for assistive tech')

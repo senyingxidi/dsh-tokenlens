@@ -231,6 +231,7 @@ window.__ModuleLoader__.load({
       statsSpeedTitle: '输出速度（TPS）',
       statsSpeedHint: '输出 Token ÷ 模型自身耗时（step 开始到消息返回）；不含工具调用等待，但输出含思考 Token',
       statsSpeedTotal: '均值 {tps} tok/s',
+      statsSpeedPeak: '峰值 {tps} tok/s',
       statsSpeedEmpty: '暂无可计算的速度样本（需要 step 计时数据）',
       statsSpeedBarTitle: '{date} · {tps} tok/s（{tokens} 输出 ÷ {seconds}s）',
       statsLast7Days: '最近7天',
@@ -506,6 +507,7 @@ window.__ModuleLoader__.load({
       statsSpeedHint:
         'Output tokens ÷ the model’s own request time (step start to message); tool waits excluded, reasoning tokens included',
       statsSpeedTotal: 'avg {tps} tok/s',
+      statsSpeedPeak: 'peak {tps} tok/s',
       statsSpeedEmpty: 'No speed samples yet (needs step timing data)',
       statsSpeedBarTitle: '{date} · {tps} tok/s ({tokens} output ÷ {seconds}s)',
       statsLast7Days: 'Last 7 days',
@@ -3440,6 +3442,11 @@ window.__ModuleLoader__.load({
 .dsh-tokenlens-chart-layout-row>.dsh-tokenlens-capacity{flex:0.85 1 260px}
 .dsh-tokenlens-chart-layout-row>.dsh-tokenlens-stats{flex:1.25 1 330px;min-width:0}
 .dsh-tokenlens-chart-layout-row>.dsh-tokenlens-details{flex:1 1 100%;min-width:0}
+/* v1.7.1: the TPS trend is a full-width row, exactly like the details card. */
+.dsh-tokenlens-chart-layout-row>.dsh-tokenlens-section[data-speed-section]{flex:1 1 100%;min-width:0}
+.dsh-tokenlens-speed-svg{display:block;width:100%;height:96px;overflow:visible}
+.dsh-tokenlens-speed-axis{display:flex;justify-content:space-between;gap:6px;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:1.2;font-variant-numeric:tabular-nums;min-width:0}
+.dsh-tokenlens-speed-axis>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media (max-width:680px){.dsh-tokenlens-chart-layout-row>*{flex-basis:100%!important}}
 .dsh-tokenlens-details-charts{min-width:0}
 /* Data-mode 明细: three FULL-WIDTH blocks stacked vertically (v0.30.0 layout). */
@@ -3923,29 +3930,28 @@ window.__ModuleLoader__.load({
       const snapshot = normalizeSnapshot(state.snapshot)
       const brand = providerBrand(state, snapshot)
       const tooltip = chipTooltip(snapshot, state.providerId, t)
+      // v1.7.1: a NATIVE title, not the platform Tooltip. On an unmaximized
+      // window the Tooltip's bubble rendered at the chip's right edge, overflowed
+      // the dock and produced a horizontal scrollbar on the conversation area;
+      // that scrollbar shifted the layout, which re-triggered the hover and
+      // flickered the whole area. A native title draws nothing in the DOM, so it
+      // cannot affect layout at all. The text is unchanged.
       return h(
         'span',
         { className: 'dsh-tokenlens-anchor', 'data-composer-stat': 'tokenlens' },
         h(
-          Tooltip,
-          { label: tooltip, side: 'top' },
-          h(
-            'button',
-            {
-              type: 'button',
-              className: 'dsh-tokenlens-chip',
-              // v1.7.0: no native `title` here. Setting both a native title and
-              // the platform Tooltip made the two compete on hover (the native
-              // one stole/released hover as it appeared), which flickered the
-              // surrounding conversation area. The Tooltip carries the same text.
-              'aria-label': t('chipHint'),
-              'aria-haspopup': 'dialog',
-              onClick: () => openDialog(sessionId),
-            },
-            h('span', { className: 'dsh-tokenlens-dot', 'data-level': chipLevel(snapshot, state), 'aria-hidden': true }),
-            h('span', { className: 'dsh-tokenlens-brand' }, brand),
-            chipPieces(snapshot, state.providerId, t),
-          ),
+          'button',
+          {
+            type: 'button',
+            className: 'dsh-tokenlens-chip',
+            title: tooltip,
+            'aria-label': t('chipHint'),
+            'aria-haspopup': 'dialog',
+            onClick: () => openDialog(sessionId),
+          },
+          h('span', { className: 'dsh-tokenlens-dot', 'data-level': chipLevel(snapshot, state), 'aria-hidden': true }),
+          h('span', { className: 'dsh-tokenlens-brand' }, brand),
+          chipPieces(snapshot, state.providerId, t),
         ),
       )
     }
@@ -3965,25 +3971,23 @@ window.__ModuleLoader__.load({
         'span',
         { className: 'dsh-tokenlens-anchor', 'data-composer-stat': 'tokenlens' },
         h(
-          Tooltip,
-          { label, side: 'top' },
-          h(
-            'button',
-            {
-              type: 'button',
-              className: 'dsh-tokenlens-chip',
-              // v1.7.0: same as the normal chip — only the platform Tooltip, so
-              // the native and platform tooltips cannot compete on hover.
-              'aria-label': label,
-              'aria-haspopup': 'dialog',
-              ...(needsConfig ? { 'data-needs-config': 'true' } : {}),
-              ...(statsOnly ? { 'data-stats-only': 'true' } : {}),
-              onClick: () => openDialog(sessionId),
-            },
-            h('span', { className: 'dsh-tokenlens-dot', 'data-level': statsOnly ? 'normal' : 'warning', 'aria-hidden': true }),
-            h('span', { className: 'dsh-tokenlens-brand' }, brand),
-            h('span', { className: 'dsh-tokenlens-metric' }, label),
-          ),
+          'button',
+          {
+            type: 'button',
+            className: 'dsh-tokenlens-chip',
+            // v1.7.1: native title, for the same reason as the normal chip — a
+            // Tooltip bubble here could overflow a narrow dock and add a
+            // horizontal scrollbar that made the conversation area flicker.
+            title: label,
+            'aria-label': label,
+            'aria-haspopup': 'dialog',
+            ...(needsConfig ? { 'data-needs-config': 'true' } : {}),
+            ...(statsOnly ? { 'data-stats-only': 'true' } : {}),
+            onClick: () => openDialog(sessionId),
+          },
+          h('span', { className: 'dsh-tokenlens-dot', 'data-level': statsOnly ? 'normal' : 'warning', 'aria-hidden': true }),
+          h('span', { className: 'dsh-tokenlens-brand' }, brand),
+          h('span', { className: 'dsh-tokenlens-metric' }, label),
         ),
       )
     }
@@ -6088,36 +6092,89 @@ window.__ModuleLoader__.load({
               h('span', { key: 'hint', className: 'dsh-tokenlens-hint' }, t('statsSpeedEmpty')),
             )
           : (() => {
+              // v1.7.1: a CURVE, not bars — the trend is a rate, and a line reads
+              // it far better than per-day columns. The SVG scales to the card
+              // width; `preserveAspectRatio="none"` lets it fill without keeping
+              // the viewBox ratio, and the per-day hover targets are transparent
+              // columns so nothing is distorted.
+              const width = 320
+              const height = 90
+              const pad = 4
               const max = Math.max(...byDay.map((entry) => entry.tps ?? 0), 1)
-              const bars = byDay.map((entry, index) => {
-                const tps = entry.tps ?? 0
-                const height = Math.max(2, Math.round((tps / max) * 1000) / 10)
-                return h(
-                  'div',
+              const stepX = byDay.length > 1 ? (width - pad * 2) / (byDay.length - 1) : 0
+              const points = byDay.map((entry, index) => {
+                const x = byDay.length > 1 ? pad + stepX * index : width / 2
+                const y = height - pad - ((entry.tps ?? 0) / max) * (height - pad * 2)
+                return { x, y }
+              })
+              const line = points.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' ')
+              const area = `${pad.toFixed(1)},${(height - pad).toFixed(1)} ${line} ${(width - pad).toFixed(1)},${(height - pad).toFixed(1)}`
+              const columnWidth = byDay.length > 1 ? stepX : width - pad * 2
+              const columns = byDay.map((entry, index) =>
+                h(
+                  'rect',
                   {
-                    key: `speed-${entry.day}-${index}`,
-                    className: 'dsh-tokenlens-chart-bar-wrap',
+                    key: `hit-${entry.day}-${index}`,
+                    x: (points[index].x - columnWidth / 2).toFixed(1),
+                    y: 0,
+                    width: Math.max(1, columnWidth).toFixed(1),
+                    height: String(height),
+                    fill: 'transparent',
                     'data-speed-day': entry.day,
-                    'data-speed-tps': String(tps),
-                    title: t('statsSpeedBarTitle', {
+                    'data-speed-tps': String(entry.tps ?? 0),
+                  },
+                  h(
+                    'title',
+                    { key: 'tip' },
+                    t('statsSpeedBarTitle', {
                       date: entry.day,
-                      tps: tps.toFixed(1),
+                      tps: (entry.tps ?? 0).toFixed(1),
                       tokens: formatTokensPrecise(entry.outputTokens),
                       seconds: entry.seconds.toFixed(1),
                     }),
-                  },
-                  h('div', {
-                    className: 'dsh-tokenlens-chart-bar',
-                    style: { height: `${height}%` },
-                    'aria-hidden': 'true',
-                  }),
-                )
-              })
-              return h(
-                'div',
-                { key: 'bars', className: 'dsh-tokenlens-chart-plot', 'data-speed-plot': 'true' },
-                h('div', { key: 'row', className: 'dsh-tokenlens-chart-bars' }, bars),
+                  ),
+                ),
               )
+              const svg = h(
+                'svg',
+                {
+                  key: 'svg',
+                  className: 'dsh-tokenlens-speed-svg',
+                  'data-speed-plot': 'true',
+                  viewBox: `0 0 ${width} ${height}`,
+                  preserveAspectRatio: 'none',
+                  role: 'img',
+                  'aria-label': t('statsSpeedTitle'),
+                },
+                h('polygon', {
+                  key: 'area',
+                  className: 'dsh-tokenlens-speed-area',
+                  points: area,
+                  fill: 'rgba(46,158,91,.18)',
+                  'aria-hidden': 'true',
+                }),
+                h('polyline', {
+                  key: 'line',
+                  className: 'dsh-tokenlens-speed-line',
+                  points: line,
+                  fill: 'none',
+                  stroke: '#2e9e5b',
+                  'stroke-width': '1.6',
+                  'stroke-linecap': 'round',
+                  'stroke-linejoin': 'round',
+                  'vector-effect': 'non-scaling-stroke',
+                  'aria-hidden': 'true',
+                }),
+                columns,
+              )
+              const axis = h(
+                'div',
+                { key: 'axis', className: 'dsh-tokenlens-speed-axis', 'aria-hidden': 'true' },
+                h('span', { key: 'first' }, byDay[0].day),
+                byDay.length > 1 ? h('span', { key: 'peak' }, t('statsSpeedPeak', { tps: max.toFixed(1) })) : null,
+                byDay.length > 1 ? h('span', { key: 'last' }, byDay[byDay.length - 1].day) : null,
+              )
+              return h('div', { key: 'plot', className: 'dsh-tokenlens-speed-plot' }, svg, axis)
             })()
       return h(
         'div',
