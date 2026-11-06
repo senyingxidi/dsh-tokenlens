@@ -1606,15 +1606,19 @@ test('a command code dialog shows the dollar capacity and the derived monthly pe
     // v1.7.4: 剩余/本月额度 were removed — only the purchased amount stays.
     assert.doesNotMatch(text, /剩余 \$4\.50/)
     assert.doesNotMatch(text, /本月额度 \$10\.00/)
-    // Command Code is the provider that sizes its windows in dollars.
-    assert.match(text, /\$0\.50 \/ \$2\.50/)
-    assert.match(text, /\$4\.50 \/ \$10\.00/)
-    // v1.6.6: the month is sized in dollars too, and now carries a percentage
-    // derived from `monthlyCredits + period spend`.
-    assert.match(text, /\$0\.99 \/ \$70\.00/)
+    // v1.7.5: the provider-native dollar line ($used / $cap) is gone from every
+    // window row — the percentage already states the position, and the money
+    // figures only invited comparison with the credits card.
+    assert.doesNotMatch(text, /\$0\.50 \/ \$2\.50/)
+    assert.doesNotMatch(text, /\$4\.50 \/ \$10\.00/)
+    assert.doesNotMatch(text, /\$0\.99 \/ \$70\.00/)
+    assert.equal(
+      findAll(tree, (element) => element.props?.className === 'dsh-tokenlens-capacity-money').length,
+      0,
+      'no window row carries a dollar capacity any more',
+    )
+    // The percentage is what remains, and the month still carries its own.
     assert.match(text, /1\.4%/)
-    const money = findAll(tree, (element) => element.props?.className === 'dsh-tokenlens-capacity-money')
-    assert.equal(money.length, 3, 'each sized window carries its dollar capacity')
     const percents = findAll(tree, (element) => element.props?.className === 'dsh-tokenlens-percent')
     assert.equal(percents.length, 3)
     assert.deepEqual(
