@@ -197,11 +197,6 @@ window.__ModuleLoader__.load({
       balanceToppedUp: '充值 {amount}',
       balanceWallets: '钱包：{amounts}',
       balanceBonus: '奖励：{amounts}',
-      creditsRemaining: '剩余 {amount}',
-      creditsGranted: '本月额度 {amount}',
-      creditsModelAllowance: '{model} 等效额度 {amount}',
-      creditsModelAllowanceModel: '当前模型',
-      creditsModelAllowanceHint: '控制台的每月百分比按额度池计算；等效额度是该模型折扣后能覆盖的消费额',
       creditsPurchased: '加购 {amount}',
       refresh: '刷新',
       refreshing: '正在刷新…',
@@ -476,12 +471,6 @@ window.__ModuleLoader__.load({
       balanceToppedUp: 'Topped up {amount}',
       balanceWallets: 'Wallets: {amounts}',
       balanceBonus: 'Bonus: {amounts}',
-      creditsRemaining: 'Remaining {amount}',
-      creditsGranted: 'Granted {amount}',
-      creditsModelAllowance: '{model} equivalent {amount}',
-      creditsModelAllowanceModel: 'current model',
-      creditsModelAllowanceHint:
-        'The console computes its monthly percentage from the credit pool; the equivalent allowance is what a discounted model can cover',
       creditsPurchased: 'Purchased {amount}',
       refresh: 'Refresh',
       refreshing: 'Refreshing…',
@@ -4365,47 +4354,18 @@ window.__ModuleLoader__.load({
       )
     }
 
-    /** The Command Code credits line (remaining / granted / purchased, USD). */
+    /** The Command Code credits line (v1.7.4: the purchased amount only). */
     function buildCreditsLine(snapshot, t) {
       const credits = snapshot.credits
       if (credits === null) return null
       const parts = []
-      if (credits.remaining !== null) {
-        parts.push(
-          h('span', { key: 'remaining' }, t('creditsRemaining', { amount: formatMoney(credits.remaining, 'USD') })),
-        )
-      }
-      if (credits.granted !== null) {
-        parts.push(h('span', { key: 'granted' }, t('creditsGranted', { amount: formatMoney(credits.granted, 'USD') })))
-      }
+      // v1.7.4: 「剩余」 and 「本月额度」 were dropped on request — the remaining
+      // credits already appear nowhere else useful, and the granted/allowance
+      // pair invited confusion with the monthly percentage (which the provider
+      // measures against its own pool). Only the purchased amount is kept.
       if (credits.purchased !== null) {
         parts.push(
           h('span', { key: 'purchased' }, t('creditsPurchased', { amount: formatMoney(credits.purchased, 'USD') })),
-        )
-      }
-      // v1.7.3: the console advertises a larger allowance for discounted models
-      // (DeepSeek V4.1 Flash: $100 on a $70 pool) but still prints the monthly
-      // percentage against the POOL. Say so instead of silently disagreeing.
-      if (
-        credits.allowanceUsd !== null &&
-        credits.granted !== null &&
-        Math.abs(credits.allowanceUsd - credits.granted) > 0.005
-      ) {
-        const modelLabel = String(credits.allowanceModel ?? '').replace(/^[^/]+\//, '')
-        parts.push(
-          h(
-            'span',
-            {
-              key: 'allowance',
-              className: 'dsh-tokenlens-credits-allowance',
-              'data-model-allowance': String(credits.allowanceUsd),
-              title: t('creditsModelAllowanceHint'),
-            },
-            t('creditsModelAllowance', {
-              model: modelLabel === '' ? t('creditsModelAllowanceModel') : modelLabel,
-              amount: formatMoney(credits.allowanceUsd, 'USD'),
-            }),
-          ),
         )
       }
       if (parts.length === 0) return null

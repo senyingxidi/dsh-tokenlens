@@ -1602,9 +1602,10 @@ test('a command code dialog shows the dollar capacity and the derived monthly pe
     assert.match(text, /Command Code/)
     assert.match(text, /套餐：Beginner/)
     assert.match(text, /账户：dev@example\.com/)
-    assert.match(text, /剩余 \$4\.50/)
-    assert.match(text, /本月额度 \$10\.00/)
     assert.match(text, /加购 \$0\.00/)
+    // v1.7.4: 剩余/本月额度 were removed — only the purchased amount stays.
+    assert.doesNotMatch(text, /剩余 \$4\.50/)
+    assert.doesNotMatch(text, /本月额度 \$10\.00/)
     // Command Code is the provider that sizes its windows in dollars.
     assert.match(text, /\$0\.50 \/ \$2\.50/)
     assert.match(text, /\$4\.50 \/ \$10\.00/)
@@ -4165,21 +4166,24 @@ test('the TPS curve carries a Y axis and a hover readout (v1.7.2)', async () => 
   }
 })
 
-test('the credits line reports the pool and explains the model allowance (v1.7.3)', async () => {
-  // The provider console prints 每月限额 against the CREDIT POOL; the per-model
-  // allowance ($100 on a $70 GOAT pool) is advertising. Showing it as the meter
-  // made the plugin disagree with the console, so it is a labelled extra instead.
+test('the credits line keeps only the purchased amount (v1.7.4)', async () => {
+  // 「剩余」 and 「本月额度」 were removed on request: the granted number invited
+  // confusion with the monthly percentage (which the provider measures against
+  // its own pool) and the per-model equivalent made it worse.
   const plugin = loadPlugin()
   try {
     const tree = await settleDialog(plugin, 'commandcode')
     const line = findElement(tree, (element) => element.props?.className === 'dsh-tokenlens-credits')
     assert.ok(line, 'the credits line renders')
     const text = textOf(line)
-    assert.match(text, /本月额度 \$10\.00/, 'the pool is still what the month is measured against')
-    const allowance = findElement(line, (element) => element.props?.['data-model-allowance'] !== undefined)
-    assert.ok(allowance, 'the model allowance is shown as context')
-    assert.equal(allowance.props['data-model-allowance'], '14', 'it carries the advertised number')
-    assert.match(textOf(allowance), /deepseek-v4\.1-flash 等效额度 \$14\.00/, 'and names the model')
+    assert.match(text, /加购 \$0\.00/, 'the purchased amount stays')
+    assert.doesNotMatch(text, /剩余/, 'the remaining credits are gone')
+    assert.doesNotMatch(text, /本月额度/, 'the granted amount is gone')
+    assert.equal(
+      findElement(line, (element) => element.props?.['data-model-allowance'] !== undefined),
+      undefined,
+      'the per-model equivalent is gone too',
+    )
   } finally {
     plugin.dispose()
   }
