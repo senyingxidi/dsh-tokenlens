@@ -84,7 +84,15 @@ from `dsh-app://app/` and forwards non-asset paths to the Host).
     "monthly": { … } | null
   } | null,                                  // null for balance-only providers
   "balance": { "amount": 2.26, "currency": "CNY", "granted": 0, "toppedUp": 2.26 } | null,
-  "credits": { "remaining": 4.5, "granted": 10, "purchased": 0 } | null,
+  "credits": {
+    "remaining": 4.5, "granted": 10, "purchased": 0,
+    // v1.7.2: the SELECTED model's advertised allowance. Advertising only: the
+    // monthly percentage is always measured against the credit pool (v1.7.3),
+    // because that is what the provider's own console does.
+    "poolUsd": 10, "allowanceUsd": 14,
+    "allowanceModel": "deepseek/deepseek-v4.1-flash" | null,
+    "allowanceBasis": "model" | "pool" | "unknown"
+  } | null,
   "account": { "name": "…", "userName": "…" } | null,   // non-secret display info
   "links": { "console": "https://opencode.ai/console" } | null,  // provider-owned web page, follows the selection
   "fetchedAt": "2026-10-25T09:03:00.000Z",
@@ -129,9 +137,13 @@ plugin never sizes a month from a plan catalog.
 
 **The denominator is deliberately model-independent.** GOAT advertises "up to $100" and lists
 per-model allowances ($100 on DeepSeek V4.1 Flash, $60 on several others) because the same
-credits stretch further on a discounted model; the pool itself is one number. Letting the
-picker change the denominator would move the meter while the account did not change, so
-`parseCommandCode` takes no model input.
+credits stretch further on a discounted model; the pool itself is one number. Measured against
+the provider's own console: with $2.94 spent it prints 每月限额 **4%**, i.e. `2.94 / 70 = 4.2%`;
+`2.94 / 100` would print 2.9%. So the percentage is pool-based, and the per-model allowance is
+reported as `credits.allowanceUsd` for context only (v1.7.3). The model *is* forwarded with the
+request (`session.modelSelection.next.model`) so that the allowance can be resolved, and the Host
+drops the cached snapshot on a model switch **only** for providers whose allowance actually
+follows the model (`MODEL_SENSITIVE_ALLOWANCE`, currently `commandcode`).
 
 `windowLimits.limited` is a **capability flag** ("this plan paces you with rolling windows"),
 not a state: the live payload carries `limited: true` together with `fiveHour.exceeded: false`.
@@ -311,7 +323,11 @@ provider effective-date fallback (`effectiveDay`, `effectiveDays`,
 folder basename, used by the client to match a sidebar hover card; the full
 `cwd` is Host-only and never sent on the wire), the rolling 5-hour local window
 (`fiveHours`, DSH-only because external harnesses are day-granular), and the
-bounded `daily[]` series used by the chart view. Absolute local paths are
+bounded `daily[]` series used by the chart view, the `speed` series behind the
+TPS trend (v1.7.0), and the subscription window (`effectiveDay` is the plan's
+period start when the Host learned it, and `sinceEffective` is summed from the
+per-day buckets inside `[window start, today]` rather than borrowed from the
+30-day or all-time bucket — v1.7.2). Absolute local paths are
 stripped from the wire; free-form error messages have path substrings replaced
 with `[path]`.
 
@@ -357,7 +373,7 @@ with `[path]`.
         "last30Days": { "total": …, "messages": … },
         "allTime": { "total": …, "messages": … } }
     ],
-    "daily": [                                  // <=120 days, ascending; chart series
+    "daily": [                                  // <=30 days (v1.7.0), ascending; chart series
       { "day": "2026-10-25",
         "total": { "total": 123456, "messages": 42 },
         "hours": [0, 0, 0, 1234, 5678, …],      // 24 integers: local-hour token totals
@@ -366,6 +382,20 @@ with `[path]`.
                            "hours": [0, 0, 0, 500, 734, …] }
         } }
     ],
+    // v1.7.0: output-speed (TPS) series. `tps` is output tokens over the summed
+    // model time of the steps that produced them (`step/start` ->
+    // `assistant/message`), so a step's tool calls — which are emitted after the
+    // message — do not dilute it. A day with no positive duration is omitted
+    // instead of being given an infinite rate. `total.tps` is null when the
+    // window holds no samples. Each provider row carries its own `speed` object
+    // with the same shape, following the same window as its tokens (v1.7.2).
+    "speed": {
+      "byDay": [
+        { "day": "2026-11-05", "outputTokens": 516951, "seconds": 8493.1,
+          "tps": 60.9, "steps": 859 }
+      ],
+      "total": { "outputTokens": 939643, "seconds": 14123.9, "tps": 66.5, "steps": 1424 }
+    },
     "zcode": {                                  // extra-harness detail
       "dbPath": "C:\\Users\\…\\.zcode\\cli\\db\\db.sqlite",
       "available": true, "error": null, "rows": 65, "cached": false,

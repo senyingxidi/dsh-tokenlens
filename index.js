@@ -84,7 +84,16 @@ export const inject = []
 export const PLUGIN_NAME = 'dsh-tokenlens'
 
 /** Plugin version; mirrors package.json (kept here so diagnostics need no fs read). */
-export const PLUGIN_VERSION = '1.7.5'
+export const PLUGIN_VERSION = '1.7.6'
+
+/**
+ * Providers whose monthly allowance depends on the SELECTED model (v1.7.6).
+ *
+ * Only these need their cached snapshot dropped when the picker changes: for
+ * everyone else a model switch does not alter a single number, so refetching
+ * would be pure waste.
+ */
+const MODEL_SENSITIVE_ALLOWANCE = new Set(['commandcode'])
 
 /** Documented defaults; every field of the raw row config is optional. */
 const DEFAULTS = {
@@ -1460,8 +1469,7 @@ export function apply(ctx, rawConfig) {
     return catalog
   }
 
-  const statsService = config.stats.enabled
-    ? createUsageStats({
+  const statsService = config.stats.enabled    ? createUsageStats({
         dshHome: config.stats.dshHome !== '' ? config.stats.dshHome : dshHomeOf(process.env),
         config,
         providerCatalog: providerModelCatalog,
@@ -1614,6 +1622,14 @@ export function apply(ctx, rawConfig) {
     return scrubMessagePaths(out)
   }
 
+  /**
+   * The subscription-anchor set the last stats result was computed with (v1.7.6).
+   *
+   * Empty until a plan period start is known; a change invalidates the cached
+   * stats result so the 最近X天 window is anchored immediately.
+   */
+  let statsAnchorSignature = '[]'
+
   async function getStats(options = {}) {
     if (statsService === null) {
       return {
@@ -1622,11 +1638,18 @@ export function apply(ctx, rawConfig) {
       }
     }
     try {
+      const starts = Object.fromEntries(state.subscriptionStarts)
+      // v1.7.6: a cached stats result computed BEFORE a plan period start was
+      // known would keep the un-anchored window until the TTL expired. Recompute
+      // once whenever the anchor set changes, so the window is right immediately.
+      const signature = JSON.stringify(Object.entries(starts).sort())
+      const anchorChanged = signature !== statsAnchorSignature
       const stats = await statsService.get({
-        fresh: options.fresh === true,
+        fresh: options.fresh === true || (signature !== '[]' && anchorChanged),
         // v1.7.2: anchor each subscription provider's window to its plan start.
-        subscriptionStarts: Object.fromEntries(state.subscriptionStarts),
+        subscriptionStarts: starts,
       })
+      if (signature !== '[]') statsAnchorSignature = signature
       // v0.22.1: only subscription-backed providers use the 最近X天 window;
       // pay-as-you-go/balance providers keep the fixed 最近30天 column.
       const decorated =
@@ -1835,6 +1858,10 @@ export function apply(ctx, rawConfig) {
    * V4.1 Flash $100 while its credit pool is $70), so a model switch must also
    * drop the cached snapshot — otherwise the chip would keep showing the old
    * allowance until the next poll.
+   *
+   * v1.7.6: only for providers whose allowance is actually model-sensitive.
+   * Invalidating on every provider made switching models on DeepSeek/OpenCode
+   * throw away a perfectly good snapshot and refetch it.
    */
   function rememberRequestedModel(body, providerId) {
     const modelId = typeof body?.modelId === 'string' ? body.modelId.trim() : ''
@@ -1842,8 +1869,10 @@ export function apply(ctx, rawConfig) {
     const id = canonicalProviderId(providerId)
     if (state.selectedModels.get(id) === modelId) return
     state.selectedModels.set(id, modelId)
-    state.caches.delete(id)
-    state.flights.delete(id)
+    if (MODEL_SENSITIVE_ALLOWANCE.has(id)) {
+      state.caches.delete(id)
+      state.flights.delete(id)
+    }
     noteStatus('client-model', { providerId: id, modelId })
   }
 

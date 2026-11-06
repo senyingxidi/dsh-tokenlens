@@ -1687,6 +1687,36 @@ test('an unsupported provider is refused with a typed error', async (t) => {
   assert.equal(calls.length, 0)
 })
 
+test('a model switch only refetches the providers whose allowance follows it (v1.7.6)', async (t) => {
+  // Command Code's monthly allowance is per-model, so a switch must drop its
+  // cached snapshot. Every other provider reports the same numbers whatever the
+  // model is, so a switch there must NOT throw the cache away.
+  const { captured } = harness(t, {
+    credentials: okCredentials,
+    // A real TTL: with 0 every read refetches and cache reuse could not be observed.
+    config: { minRefreshIntervalMs: 60_000, pollIntervalMs: 0 },
+  })
+  const calls = providerFetch(t, {
+    ...COMMANDCODE_ROUTES,
+    '/user/balance': () =>
+      jsonResponse({ is_available: true, balance_infos: [{ currency: 'CNY', total_balance: '2.26' }] }),
+  })
+
+  // DeepSeek: two different models, one upstream read.
+  await bridge(captured, { action: 'snapshot', providerId: 'deepseek', modelId: 'deepseek-v4.1-flash' })
+  const afterFirst = calls.length
+  await bridge(captured, { action: 'snapshot', providerId: 'deepseek', modelId: 'deepseek-v4.1-flash-fast' })
+  assert.equal(calls.length, afterFirst, 'a model switch does not invalidate a model-agnostic provider')
+
+  // Command Code: a switch does invalidate.
+  await bridge(captured, { action: 'snapshot', providerId: 'commandcode', modelId: 'deepseek/deepseek-v4.1-flash' })
+  const afterCc = calls.length
+  await bridge(captured, { action: 'snapshot', providerId: 'commandcode', modelId: 'deepseek/deepseek-v4.1-flash' })
+  assert.equal(calls.length, afterCc, 'the same model still reuses the cache')
+  await bridge(captured, { action: 'snapshot', providerId: 'commandcode', modelId: 'zai-org/GLM-5.2' })
+  assert.ok(calls.length > afterCc, 'a new model refetches the per-model allowance')
+})
+
 test('hello records the selected provider and answers with its snapshot', async (t) => {
   const { captured } = harness(t, { credentials: okCredentials, config: { minRefreshIntervalMs: 0, pollIntervalMs: 0 } })
   providerFetch(t, COMMANDCODE_ROUTES)

@@ -4193,6 +4193,49 @@ test('the credits line keeps only the purchased amount (v1.7.4)', async () => {
   }
 })
 
+test('the repository link sits left of the version (v1.7.6)', async () => {
+  const plugin = loadPlugin()
+  try {
+    const tree = await settleDialog(plugin, 'commandcode')
+    const version = findElement(tree, (element) => element.props?.className === 'dsh-tokenlens-version')
+    assert.ok(version, 'the version row renders')
+    const link = findElement(version, (element) => element.props?.['data-repo-link'] === 'true')
+    assert.ok(link, 'the row carries a repository link')
+    assert.equal(link.props.href, 'https://github.com/senyingxidi/dsh-tokenlens', 'it points at the repository')
+    assert.equal(link.props.target, '_blank', 'it opens in a new tab')
+    assert.match(String(link.props.rel), /noopener/, 'and cannot reach back through window.opener')
+    assert.equal(typeof link.props.title, 'string', 'the link explains itself on hover')
+    // It must come BEFORE the version text, not after it.
+    const children = version.children ?? []
+    const linkIndex = children.findIndex((child) => child?.props?.['data-repo-link'] === 'true')
+    const textIndex = children.findIndex(
+      (child) => child?.props?.className === 'dsh-tokenlens-version-text',
+    )
+    assert.ok(linkIndex >= 0 && textIndex >= 0, 'both parts are direct children')
+    assert.ok(linkIndex < textIndex, 'the repository link is to the left of the version')
+    assert.match(textOf(children[textIndex]), /插件 v\d+\.\d+\.\d+/, 'the version text still renders')
+    // The mark is a real inline icon, decorative for assistive tech.
+    const svg = findElement(link, (element) => element.type === 'svg')
+    assert.ok(svg, 'the link carries an icon')
+    assert.equal(svg.props['aria-hidden'], 'true', 'the icon is decorative')
+    assert.equal(svg.props.fill, 'none', 'it is stroke-drawn like every other icon')
+  } finally {
+    plugin.dispose()
+  }
+})
+
+test('the TPS hover index never survives a view or provider change (v1.7.6)', () => {
+  // The hovered index points into a series that a scope/view/provider switch
+  // replaces, so it must be cleared with the rest of the chart view state.
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  const defaults = source.slice(source.indexOf('function usageViewDefaultsPatch'), source.indexOf('function usageViewDefaultsPatch') + 900)
+  assert.match(defaults, /speedHover: null/, 'a provider switch clears it')
+  const scopeTab = source.slice(source.indexOf("onClick: () => store.set({ statsScope"), source.indexOf("onClick: () => store.set({ statsScope") + 140)
+  assert.match(scopeTab, /speedHover: null/, 'a scope switch clears it')
+  const viewTab = source.slice(source.indexOf('statsView: view, chartHover: null'), source.indexOf('statsView: view, chartHover: null') + 130)
+  assert.match(viewTab, /speedHover: null/, 'a view switch clears it')
+})
+
 test('the chip uses a native title and the speed card is full width (v1.7.1)', async () => {
   // Two layout-safety guarantees:
   //  - the chip must not mount a Tooltip bubble, which overflowed a narrow dock,

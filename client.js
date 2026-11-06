@@ -165,6 +165,8 @@ window.__ModuleLoader__.load({
     }
     /** The npm package page the 「打开 npm」 update links point at. */
     const NPM_PACKAGE_URL = 'https://www.npmjs.com/package/dsh-tokenlens'
+    /** The source repository, linked to the left of the version (v1.7.6). */
+    const REPO_URL = 'https://github.com/senyingxidi/dsh-tokenlens'
 
     const zh = {
       title: '词元透镜（dsh-TokenLens）',
@@ -272,6 +274,8 @@ window.__ModuleLoader__.load({
       capacityTokenNoEstimate: '预计可消耗 —',
       capacityTokenEstimateHint: '本机 Token 记录 ÷ 当前套餐百分比估算，仅供参考',
       pluginVersion: '插件 v{version}',
+      repoLink: 'GitHub',
+      repoLinkHint: '在 GitHub 上打开 dsh-TokenLens 仓库（源码、更新日志、问题反馈）',
       statsToday: '今日',
       statsAllTime: '总计',
       statsInput: '输入',
@@ -547,6 +551,8 @@ window.__ModuleLoader__.load({
       capacityTokenNoEstimate: 'Est. quota —',
       capacityTokenEstimateHint: 'Local token records ÷ current plan percentage; estimate only',
       pluginVersion: 'Plugin v{version}',
+      repoLink: 'GitHub',
+      repoLinkHint: 'Open the dsh-TokenLens repository on GitHub (source, changelog, issues)',
       statsToday: 'Today',
       statsAllTime: 'All time',
       statsInput: 'Input',
@@ -774,6 +780,10 @@ window.__ModuleLoader__.load({
       windows: ['M2.6 3.4h10.8v9.2H2.6z', 'M8 3.4v9.2', 'M2.6 7.9h10.8'],
       coin: ['M8 2.4a5.6 5.6 0 1 0 0 11.2A5.6 5.6 0 0 0 8 2.4Z', 'M8 5.2v5.6', 'M6.3 6.6h3.4', 'M6.3 9.4h3.4'],
       check: ['M3 8.4 6.2 11.4 13 4.4'],
+      // v1.7.6: the repository mark, drawn stroke-only like every other icon.
+      github: [
+        'M8 2.4a5.6 5.6 0 0 0-1.7 10.9c.3.1.4-.1.4-.3v-1c-1.5.3-1.9-.7-1.9-.7-.2-.6-.6-.7-.6-.7-.5-.4 0-.4 0-.4.5 0 .8.5.8.5.5.9 1.3.6 1.7.5 0-.4.2-.7.3-.8-1.3-.1-2.6-.6-2.6-2.7 0-.6.2-1.1.6-1.5-.1-.1-.2-.7 0-1.4 0 0 .5-.2 1.6.6a5.4 5.4 0 0 1 2.8 0c1.1-.8 1.6-.6 1.6-.6.3.7.1 1.3.1 1.4.3.4.5.9.5 1.5 0 2.1-1.3 2.6-2.6 2.7.2.2.4.5.4 1v1.5c0 .2.1.4.4.3A5.6 5.6 0 0 0 8 2.4Z',
+      ],
       alert: ['M8 2.5 14 13.2H2z', 'M8 6.2v3.2', 'M8 11.3h.01'],
       spinner: ['M8 2.5a5.5 5.5 0 1 1-5.5 5.5', 'M8 5.5v2.8'],
       ban: ['M3.2 3.2 12.8 12.8', 'M8 2.4a5.6 5.6 0 1 0 0 11.2A5.6 5.6 0 0 0 8 2.4Z'],
@@ -2206,6 +2216,9 @@ window.__ModuleLoader__.load({
         detailsWindow: settings.detailsWindow,
         chartHover: null,
         chartDay: null,
+        // v1.7.6: the TPS hover index is view state like the chart's, so it must
+        // not survive a provider switch (the series behind it changed).
+        speedHover: null,
       }
     }
 
@@ -3312,7 +3325,12 @@ window.__ModuleLoader__.load({
       if (modelChanged) store.set({ modelId: nextModel })
       syncProvider(providerId)
       const after = store.get()
-      if (modelChanged && after.providerId !== null && after.inFlight !== true) {
+      // v1.7.6: only Command Code's allowance follows the model, so only its
+      // snapshots are worth refetching on a switch (see index.js
+      // MODEL_SENSITIVE_ALLOWANCE). Everyone else keeps the cached snapshot.
+      const modelSensitive =
+        after.providerId !== null && canonicalProviderId(after.providerId) === 'commandcode'
+      if (modelChanged && modelSensitive && after.inFlight !== true) {
         void requestUsage('snapshot')
       }
     }
@@ -3614,7 +3632,11 @@ window.__ModuleLoader__.load({
 .dsh-tokenlens-chart-drill-title{color:var(--dsw-alias-label-secondary);font-size:var(--dsw-alias-font-size-sm,12px);line-height:1.4;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}
 /* 明细 donut window switch (v1.2.0): one pill row under the details title. */
 .dsh-tokenlens-details-window{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
-.dsh-tokenlens-version{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:1.5;text-align:right;opacity:.75;overflow-wrap:anywhere}
+.dsh-tokenlens-version{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:1.5;text-align:right;opacity:.75;overflow-wrap:anywhere;display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap}
+/* v1.7.6: the repository link sits left of the version text. */
+.dsh-tokenlens-repo{display:inline-flex;align-items:center;gap:4px;color:inherit;text-decoration:none;flex:0 0 auto;border-radius:var(--dsw-radius-sm);transition:color .12s ease,opacity .12s ease}
+.dsh-tokenlens-repo:hover,.dsh-tokenlens-repo:focus-visible{color:var(--dsw-alias-label-primary,currentColor);opacity:1;text-decoration:underline}
+.dsh-tokenlens-version-text{flex:0 0 auto}
 /* Update status on the plugin-version line (dialog body): wraps on narrow screens. */
 .dsh-tokenlens-version-update{white-space:normal;overflow-wrap:anywhere}
 .dsh-tokenlens-version .dsh-tokenlens-update-link{color:inherit;font-size:inherit;vertical-align:baseline}
@@ -4495,7 +4517,7 @@ window.__ModuleLoader__.load({
             'data-scope': scope,
             'data-active': effective === scope ? 'true' : 'false',
             disabled: stats === null,
-            onClick: () => store.set({ statsScope: scope, chartHover: null, chartDay: null }),
+            onClick: () => store.set({ statsScope: scope, chartHover: null, chartDay: null, speedHover: null }),
           },
           label,
         )
@@ -4521,7 +4543,7 @@ window.__ModuleLoader__.load({
             'data-active': active === view ? 'true' : 'false',
             'aria-pressed': active === view ? 'true' : 'false',
             onClick: () => {
-              if (active !== view) store.set({ statsView: view, chartHover: null, chartDay: null })
+              if (active !== view) store.set({ statsView: view, chartHover: null, chartDay: null, speedHover: null })
             },
           },
           Icon(iconName, 12),
@@ -6173,9 +6195,11 @@ window.__ModuleLoader__.load({
                   'rect',
                   {
                     key: `hit-${entry.day}-${index}`,
-                    x: (points[index].x - columnWidth / 2).toFixed(1),
+                    // v1.7.6: clamp the hit column into the viewBox — a single-day
+                    // series used to start at a negative x and lose half its area.
+                    x: Math.max(0, Math.min(width - 1, points[index].x - columnWidth / 2)).toFixed(1),
                     y: 0,
-                    width: Math.max(1, columnWidth).toFixed(1),
+                    width: Math.max(1, Math.min(columnWidth, width)).toFixed(1),
                     height: String(height),
                     fill: 'transparent',
                     'data-speed-day': entry.day,
@@ -7804,11 +7828,29 @@ window.__ModuleLoader__.load({
       const body = [buildManageButton(state, t), statsArea]
       const displayVersion = currentPluginVersionOf(state)
       if (displayVersion !== '') {
+        // v1.7.6: the repository link sits to the LEFT of the version, so the
+        // version stays the right-most element of the row.
+        const repo = h(
+          'a',
+          {
+            key: 'repo',
+            className: 'dsh-tokenlens-repo',
+            href: REPO_URL,
+            target: '_blank',
+            rel: 'noreferrer noopener',
+            'data-repo-link': 'true',
+            title: t('repoLinkHint'),
+            'aria-label': t('repoLinkHint'),
+          },
+          Icon('github', 13),
+          t('repoLink'),
+        )
         body.push(
           h(
             'div',
             { key: 'version', className: 'dsh-tokenlens-version' },
-            t('pluginVersion', { version: displayVersion }),
+            repo,
+            h('span', { key: 'text', className: 'dsh-tokenlens-version-text' }, t('pluginVersion', { version: displayVersion })),
             // Update status sits right next to the plugin version: 有新版本 vX
             // (link to the npm page) or 已是最新版本, only for a successful check.
             buildVersionUpdateStatus(state, t),
