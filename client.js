@@ -4135,12 +4135,10 @@ window.__ModuleLoader__.load({
               },
               resetText === '' ? tokensText : ` · ${tokensText}`,
             )
-      // Provider-native allowance (Command Code: dollars). Omitted entirely when
-      // the window cannot be sized, so the row never renders "$undefined".
-      const capacityMoney =
-        window !== null && Number.isFinite(window.used) && Number.isFinite(window.cap) && window.unit !== ''
-          ? `${formatMoney(window.used, window.unit)} / ${formatMoney(window.cap, window.unit)}`
-          : null
+      // v1.7.5: the provider-native money line ($used / $cap) is NOT rendered.
+      // Command Code's 5-hour / weekly / monthly rows already state the percentage
+      // and the local-token estimate, and the dollar figures only invited
+      // comparison with the credits card. The only money left on the card is 加购.
       const upstreamStatus =
         window !== null &&
         typeof window.status === 'string' &&
@@ -4182,9 +4180,6 @@ window.__ModuleLoader__.load({
           resetText === '' ? null : h('span', { className: 'dsh-tokenlens-reset' }, resetText),
           resetDate === null ? null : h('span', { className: 'dsh-tokenlens-reset-date', title: resetDate }, resetDate),
           resetText === '' ? null : tokensSpan,
-          capacityMoney === null
-            ? null
-            : h('span', { className: 'dsh-tokenlens-capacity-money' }, capacityMoney),
           upstreamStatus,
         ),
       )
