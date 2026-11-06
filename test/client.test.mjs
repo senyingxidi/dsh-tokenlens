@@ -276,7 +276,16 @@ function snapshotFixture(providerId = 'opencode-go') {
         },
       },
       balance: null,
-      credits: { remaining: 4.5, granted: 10, purchased: 0 },
+      credits: {
+        remaining: 4.5,
+        granted: 10,
+        purchased: 0,
+        // v1.7.3: the per-model allowance is advertising; the meter stays pooled.
+        poolUsd: 10,
+        allowanceUsd: 14,
+        allowanceModel: 'deepseek/deepseek-v4.1-flash',
+        allowanceBasis: 'model',
+      },
       account: { name: '', userName: 'dev@example.com' },
       links: { console: 'https://commandcode.ai/dev%40example.com/settings/usage' },
     }
@@ -4151,6 +4160,26 @@ test('the TPS curve carries a Y axis and a hover readout (v1.7.2)', async () => 
     assert.match(source, /'data-speed-crosshair': String\(hoverIndex\)/, 'a crosshair follows the hover')
     assert.match(source, /className: 'dsh-tokenlens-speed-dot'/, 'a marker sits on the hovered point')
     assert.match(source, /function setSpeedHover\(/, 'the hover index lives in the store')
+  } finally {
+    plugin.dispose()
+  }
+})
+
+test('the credits line reports the pool and explains the model allowance (v1.7.3)', async () => {
+  // The provider console prints 每月限额 against the CREDIT POOL; the per-model
+  // allowance ($100 on a $70 GOAT pool) is advertising. Showing it as the meter
+  // made the plugin disagree with the console, so it is a labelled extra instead.
+  const plugin = loadPlugin()
+  try {
+    const tree = await settleDialog(plugin, 'commandcode')
+    const line = findElement(tree, (element) => element.props?.className === 'dsh-tokenlens-credits')
+    assert.ok(line, 'the credits line renders')
+    const text = textOf(line)
+    assert.match(text, /本月额度 \$10\.00/, 'the pool is still what the month is measured against')
+    const allowance = findElement(line, (element) => element.props?.['data-model-allowance'] !== undefined)
+    assert.ok(allowance, 'the model allowance is shown as context')
+    assert.equal(allowance.props['data-model-allowance'], '14', 'it carries the advertised number')
+    assert.match(textOf(allowance), /deepseek-v4\.1-flash 等效额度 \$14\.00/, 'and names the model')
   } finally {
     plugin.dispose()
   }

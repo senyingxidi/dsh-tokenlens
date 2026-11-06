@@ -199,6 +199,9 @@ window.__ModuleLoader__.load({
       balanceBonus: '奖励：{amounts}',
       creditsRemaining: '剩余 {amount}',
       creditsGranted: '本月额度 {amount}',
+      creditsModelAllowance: '{model} 等效额度 {amount}',
+      creditsModelAllowanceModel: '当前模型',
+      creditsModelAllowanceHint: '控制台的每月百分比按额度池计算；等效额度是该模型折扣后能覆盖的消费额',
       creditsPurchased: '加购 {amount}',
       refresh: '刷新',
       refreshing: '正在刷新…',
@@ -475,6 +478,10 @@ window.__ModuleLoader__.load({
       balanceBonus: 'Bonus: {amounts}',
       creditsRemaining: 'Remaining {amount}',
       creditsGranted: 'Granted {amount}',
+      creditsModelAllowance: '{model} equivalent {amount}',
+      creditsModelAllowanceModel: 'current model',
+      creditsModelAllowanceHint:
+        'The console computes its monthly percentage from the credit pool; the equivalent allowance is what a discounted model can cover',
       creditsPurchased: 'Purchased {amount}',
       refresh: 'Refresh',
       refreshing: 'Refreshing…',
@@ -1096,6 +1103,13 @@ window.__ModuleLoader__.load({
         remaining: numberOrNull(raw.remaining),
         granted: numberOrNull(raw.granted),
         purchased: numberOrNull(raw.purchased),
+        // v1.7.3: the per-model allowance is ADVERTISING, not the meter's
+        // denominator — the console measures the monthly percentage against the
+        // credit pool. It is kept only so the card can explain the difference.
+        poolUsd: numberOrNull(raw.poolUsd),
+        allowanceUsd: numberOrNull(raw.allowanceUsd),
+        allowanceModel: typeof raw.allowanceModel === 'string' && raw.allowanceModel !== '' ? raw.allowanceModel : null,
+        allowanceBasis: typeof raw.allowanceBasis === 'string' ? raw.allowanceBasis : null,
       }
       if (credits.remaining === null && credits.granted === null && credits.purchased === null) return null
       return credits
@@ -4367,6 +4381,31 @@ window.__ModuleLoader__.load({
       if (credits.purchased !== null) {
         parts.push(
           h('span', { key: 'purchased' }, t('creditsPurchased', { amount: formatMoney(credits.purchased, 'USD') })),
+        )
+      }
+      // v1.7.3: the console advertises a larger allowance for discounted models
+      // (DeepSeek V4.1 Flash: $100 on a $70 pool) but still prints the monthly
+      // percentage against the POOL. Say so instead of silently disagreeing.
+      if (
+        credits.allowanceUsd !== null &&
+        credits.granted !== null &&
+        Math.abs(credits.allowanceUsd - credits.granted) > 0.005
+      ) {
+        const modelLabel = String(credits.allowanceModel ?? '').replace(/^[^/]+\//, '')
+        parts.push(
+          h(
+            'span',
+            {
+              key: 'allowance',
+              className: 'dsh-tokenlens-credits-allowance',
+              'data-model-allowance': String(credits.allowanceUsd),
+              title: t('creditsModelAllowanceHint'),
+            },
+            t('creditsModelAllowance', {
+              model: modelLabel === '' ? t('creditsModelAllowanceModel') : modelLabel,
+              amount: formatMoney(credits.allowanceUsd, 'USD'),
+            }),
+          ),
         )
       }
       if (parts.length === 0) return null

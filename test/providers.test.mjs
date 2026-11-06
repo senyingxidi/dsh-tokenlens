@@ -240,37 +240,48 @@ test('without a reported model the month is measured against the credit pool (v1
   assert.equal(parsed.credits.allowanceModel, null)
 })
 
-test('a reported model sizes the month from its own allowance (v1.7.2)', () => {
-  // GOAT's pool is $70, but the console advertises $100 of usage on DeepSeek V4.1
-  // Flash because that model is discounted against the same credits. The user
-  // picks the model, so the month must be measured against ITS allowance.
+test('a reported model is reported as advertising, never as the denominator (v1.7.3)', () => {
+  // GOAT's pool is $70, but the console lists $100 of usage on DeepSeek V4.1
+  // Flash because that model is discounted against the same credits.
+  //
+  // The console's own 每月限额 percentage is measured against the POOL: with
+  // $2.94 spent it prints 4% (2.94/70 = 4.2%), while 2.94/100 would print 2.9%.
+  // Using the allowance as the denominator therefore made the plugin disagree
+  // with the console the user checks, so the pool stays the denominator and the
+  // allowance is only reported as context.
+  // Real values captured 2026-11-06 on `individual-goat`:
+  //   remaining 67.087370791 + spend 2.912629209 = 70.000000000 (the pool)
+  // The console prints 每月限额 4% for that spend, i.e. 2.9126/70 = 4.16%.
   const base = {
     credits: {
-      credits: { monthlyCredits: 97.6321774324, purchasedCredits: 0 },
-      windowLimits: { limited: true, fiveHour: { cap: 14, used: 2.3678225676 }, weekly: { cap: 35, used: 2.3678225676 } },
+      credits: { monthlyCredits: 67.087370791, purchasedCredits: 0 },
+      windowLimits: { limited: true, fiveHour: { cap: 14, used: 0.2382774408 }, weekly: { cap: 35, used: 2.912629209 } },
     },
     subscription: { success: true, data: { planId: 'individual-goat', currentPeriodEnd: '2026-12-05T13:36:10.000Z' } },
-    usageSummary: { totalMonthlyCredits: 2.3678225676 },
+    usageSummary: { totalMonthlyCredits: 2.912629209 },
   }
   const flash = parseCommandCode({ ...base, selectedModel: 'deepseek/deepseek-v4.1-flash' }, NOW)
-  assert.equal(flash.windows.monthly.cap, 100, 'DeepSeek V4.1 Flash gets $100 on GOAT')
-  assert.equal(flash.credits.granted, 100, 'the credits card agrees with the monthly row')
-  assert.equal(flash.credits.allowanceBasis, 'model')
+  assert.equal(flash.windows.monthly.cap, 70, 'the pool is remaining + spend, exactly $70')
+  assert.ok(Math.abs(flash.windows.monthly.used - 2.912629209) < 1e-9, 'used is the period spend')
+  assert.ok(Math.abs(flash.windows.monthly.percent - 4.1609) < 0.01, `percent was ${flash.windows.monthly.percent}`)
+  assert.equal(flash.credits.granted, 70, 'the credits card uses the same pool')
+  assert.equal(flash.credits.allowanceUsd, 100, 'the model allowance is reported as context')
   assert.equal(flash.credits.allowanceModel, 'deepseek/deepseek-v4.1-flash')
-  assert.ok(Math.abs(flash.windows.monthly.used - 2.3678225676) < 1e-9, 'used is still the period spend')
-  assert.ok(Math.abs(flash.windows.monthly.percent - 2.3678) < 0.01, `percent was ${flash.windows.monthly.percent}`)
-  assert.equal(flash.credits.poolUsd, 100, 'the derived pool is kept for reference')
+  assert.equal(flash.credits.allowanceBasis, 'model')
 
-  // A model with a smaller allowance is measured against that one instead.
+  // A model with a different allowance never changes the meter.
   const glm = parseCommandCode({ ...base, selectedModel: 'zai-org/GLM-5.2' }, NOW)
-  assert.equal(glm.windows.monthly.cap, 70, 'GLM-5.2 on GOAT is $70')
+  assert.equal(glm.windows.monthly.cap, flash.windows.monthly.cap, 'switching models must not move the meter')
+  assert.equal(glm.windows.monthly.percent, flash.windows.monthly.percent)
+  assert.equal(glm.credits.allowanceUsd, 70, 'the allowance is reported for the selected model')
 
-  // A vendor-prefix-free id still matches, and an unknown model falls back to the
-  // pool rather than inventing an allowance.
+  // A vendor-prefix-free id still matches, and an unknown model reports no
+  // allowance rather than inventing one.
   const bare = parseCommandCode({ ...base, selectedModel: 'deepseek-v4.1-flash' }, NOW)
-  assert.equal(bare.windows.monthly.cap, 100, 'a bare model id matches too')
+  assert.equal(bare.credits.allowanceUsd, 100, 'a bare model id matches too')
   const unknown = parseCommandCode({ ...base, selectedModel: 'someone/unlisted-model' }, NOW)
-  assert.equal(unknown.credits.allowanceBasis, 'pool', 'an unlisted model keeps the pool')
+  assert.equal(unknown.credits.allowanceBasis, 'pool', 'an unlisted model reports no allowance')
+  assert.equal(unknown.credits.allowanceUsd, 70, 'it falls back to the pool, not to the allowance')
 })
 
 test('the plan period start is reported so the stats window can anchor to it (v1.7.2)', () => {
