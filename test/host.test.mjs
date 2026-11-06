@@ -1648,7 +1648,10 @@ test('provider-aware: Command Code windows are served for providerId "commandcod
   assert.equal(snapshot.windows.rolling.unit, 'USD')
   assert.equal(snapshot.windows.monthly.used, 5.5)
   assert.equal(snapshot.windows.monthly.cap, 10)
-  assert.deepEqual(snapshot.credits, { remaining: 4.5, granted: 10, purchased: 0 })
+  assert.equal(snapshot.credits.remaining, 4.5)
+  assert.equal(snapshot.credits.granted, 10)
+  assert.equal(snapshot.credits.poolUsd, 10, 'v1.7.2 records the pool next to the allowance')
+  assert.equal(snapshot.credits.allowanceBasis, 'pool', 'no model reported, so the pool sizes the month')
   assert.equal(snapshot.account.userName, 'acct')
   // v1.6.6: `/alpha/usage/summary` joined the read (it sizes the month when the
   // plan reports no grant), so four routes are hit instead of three.

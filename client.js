@@ -234,6 +234,7 @@ window.__ModuleLoader__.load({
       statsSpeedPeak: '峰值 {tps} tok/s',
       statsSpeedEmpty: '暂无可计算的速度样本（需要 step 计时数据）',
       statsSpeedBarTitle: '{date} · {tps} tok/s（{tokens} 输出 ÷ {seconds}s）',
+      statsSpeedDetail: '{tokens} 输出 ÷ {seconds}s',
       statsLast7Days: '最近7天',
       stats7DaysShort: '7天',
       statsDaysShort: '{n}天',
@@ -510,6 +511,7 @@ window.__ModuleLoader__.load({
       statsSpeedPeak: 'peak {tps} tok/s',
       statsSpeedEmpty: 'No speed samples yet (needs step timing data)',
       statsSpeedBarTitle: '{date} · {tps} tok/s ({tokens} output ÷ {seconds}s)',
+      statsSpeedDetail: '{tokens} output ÷ {seconds}s',
       statsLast7Days: 'Last 7 days',
       stats7DaysShort: '7d',
       statsDaysShort: '{n}d',
@@ -2060,6 +2062,10 @@ window.__ModuleLoader__.load({
       let state = {
         // Provider reported by the session projection; null = "Host default".
         providerId: null,
+        // v1.7.2: model reported by the same projection. Command Code's monthly
+        // allowance depends on it ($100 on GOAT for DeepSeek V4.1 Flash), so the
+        // Host needs it with every usage request.
+        modelId: null,
         // Usage for the current provider.
         phase: 'idle', // idle | loading | ready | error
         snapshot: null,
@@ -2086,6 +2092,8 @@ window.__ModuleLoader__.load({
         // v0.25.0 chart hover: the nearest bar index under the pointer, or null.
         // Reset on mouse leave and whenever the scope/view/provider changes.
         chartHover: null,
+        // v1.7.2: the hovered point of the output-speed (TPS) curve.
+        speedHover: null,
         // v1.2.0 chart drill-down: the clicked day whose 0..23 hour histogram
         // is charted instead of the daily trend, or null (daily trend).
         chartDay: null,
@@ -2218,7 +2226,11 @@ window.__ModuleLoader__.load({
 
     /** Build a bridge payload, omitting the provider when the Host should pick. */
     function usagePayload(action, providerId) {
-      return providerId === null || providerId === undefined ? { action } : { action, providerId }
+      const base = providerId === null || providerId === undefined ? { action } : { action, providerId }
+      // v1.7.2: the selected model rides along — Command Code's monthly allowance
+      // depends on it (GOAT gives DeepSeek V4.1 Flash $100, its pool is $70).
+      const modelId = store.get().modelId
+      return typeof modelId === 'string' && modelId !== '' ? { ...base, modelId } : base
     }
 
     /** Build a stats payload (stats are global but the call reports the provider too). */
@@ -3282,6 +3294,26 @@ window.__ModuleLoader__.load({
       void requestUsage('snapshot')
     }
 
+    /**
+     * Sync BOTH halves of the session selection (v1.7.2).
+     *
+     * The provider decides which adapter runs; the model decides Command Code's
+     * per-model monthly allowance. A model switch must therefore refetch even
+     * when the provider did not move, or the chip would keep the old allowance
+     * until the next poll.
+     */
+    function syncSelection(providerId, modelId) {
+      const nextModel = typeof modelId === 'string' && modelId !== '' ? modelId : null
+      const before = store.get()
+      const modelChanged = before.modelId !== nextModel
+      if (modelChanged) store.set({ modelId: nextModel })
+      syncProvider(providerId)
+      const after = store.get()
+      if (modelChanged && after.providerId !== null && after.inFlight !== true) {
+        void requestUsage('snapshot')
+      }
+    }
+
     /** The refresh button: usage first, then a fresh stats scan, independently. */
     async function refreshAll() {
       await requestUsage('refresh')
@@ -3445,6 +3477,11 @@ window.__ModuleLoader__.load({
 /* v1.7.1: the TPS trend is a full-width row, exactly like the details card. */
 .dsh-tokenlens-chart-layout-row>.dsh-tokenlens-section[data-speed-section]{flex:1 1 100%;min-width:0}
 .dsh-tokenlens-speed-svg{display:block;width:100%;height:96px;overflow:visible}
+/* v1.7.2: Y axis + hover readout for the TPS curve. */
+.dsh-tokenlens-speed-body{display:flex;gap:6px;align-items:stretch;min-width:0}
+.dsh-tokenlens-speed-yaxis{display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:1;font-variant-numeric:tabular-nums;flex:0 0 auto;padding:1px 0}
+.dsh-tokenlens-speed-plot{position:relative;flex:1 1 auto;min-width:0}
+.dsh-tokenlens-speed-dot{position:absolute;width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;background:#2e9e5b;box-shadow:0 0 0 2px var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.35));pointer-events:none}
 .dsh-tokenlens-speed-axis{display:flex;justify-content:space-between;gap:6px;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:1.2;font-variant-numeric:tabular-nums;min-width:0}
 .dsh-tokenlens-speed-axis>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media (max-width:680px){.dsh-tokenlens-chart-layout-row>*{flex-basis:100%!important}}
@@ -3803,12 +3840,33 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * The MODEL selected in this session (v1.7.2).
+     *
+     * The projection's selection is `{provider, model, reasoningEffort?}`, so the
+     * same read that yields the provider also yields the model id — which is what
+     * decides Command Code's per-model monthly allowance.
+     */
+    function useSelectedModel(props) {
+      const useProjection = props?.useProjection
+      if (typeof useProjection !== 'function') return null
+      const model = useProjection('modelSelection')
+      try {
+        const selection = model?.next ?? model?.lastUsed
+        const id = selection?.model
+        return typeof id === 'string' && id !== '' ? id : null
+      } catch {
+        return null
+      }
+    }
+
     /** Keep the shared store's provider in sync with the session selection. */
     function useProviderSync(props) {
       const providerId = useSelectedProvider(props)
+      const modelId = useSelectedModel(props)
       React.useEffect(() => {
-        syncProvider(providerId)
-      }, [providerId])
+        syncSelection(providerId, modelId)
+      }, [providerId, modelId])
       return providerId
     }
 
@@ -4647,6 +4705,12 @@ window.__ModuleLoader__.load({
     function setChartHover(index) {
       const next = Number.isInteger(index) && index >= 0 ? index : null
       if (store.get().chartHover !== next) store.set({ chartHover: next })
+    }
+
+    /** The hovered point of the output-speed curve (v1.7.2). */
+    function setSpeedHover(index) {
+      const next = Number.isInteger(index) && index >= 0 ? index : null
+      if (store.get().speedHover !== next) store.set({ speedHover: next })
     }
 
     /** The active today bucket of the current stats scope (v0.27.2). */
@@ -6167,14 +6231,102 @@ window.__ModuleLoader__.load({
                 }),
                 columns,
               )
+              const hoverIndex =
+                Number.isInteger(state.speedHover) && state.speedHover >= 0 && state.speedHover < byDay.length
+                  ? state.speedHover
+                  : null
+              const hovered = hoverIndex === null ? null : byDay[hoverIndex]
+              const handleMove = (event) => {
+                const index = chartIndexFromEvent(event, byDay.length)
+                if (index !== null) setSpeedHover(index)
+              }
+              const handleLeave = () => setSpeedHover(null)
+              // v1.7.2: a Y axis, like the native charts — the curve alone gives no
+              // sense of magnitude.
+              const ticks = [max, max / 2, 0]
+              const yAxis = h(
+                'div',
+                { key: 'y', className: 'dsh-tokenlens-speed-yaxis', 'aria-hidden': 'true' },
+                ticks.map((value, index) =>
+                  h('span', { key: `tick-${index}`, className: 'dsh-tokenlens-chart-tick' }, `${Math.round(value)}`),
+                ),
+              )
+              const crosshair =
+                hoverIndex === null
+                  ? null
+                  : h('div', {
+                      key: 'cross',
+                      className: 'dsh-tokenlens-chart-crosshair',
+                      'data-speed-crosshair': String(hoverIndex),
+                      'aria-hidden': 'true',
+                      style: { left: `${(points[hoverIndex].x / width) * 100}%` },
+                    })
+              const marker =
+                hoverIndex === null
+                  ? null
+                  : h('div', {
+                      key: 'dot',
+                      className: 'dsh-tokenlens-speed-dot',
+                      'aria-hidden': 'true',
+                      style: {
+                        left: `${(points[hoverIndex].x / width) * 100}%`,
+                        top: `${(points[hoverIndex].y / height) * 100}%`,
+                      },
+                    })
+              const readout =
+                hovered === null
+                  ? null
+                  : h(
+                      'div',
+                      {
+                        key: 'readout',
+                        className: 'dsh-tokenlens-chart-readout',
+                        'data-speed-readout': 'true',
+                        role: 'status',
+                        style:
+                          hoverIndex === 0
+                            ? { left: '0%' }
+                            : hoverIndex === byDay.length - 1
+                              ? { right: '0%' }
+                              : {
+                                  left: `${(points[hoverIndex].x / width) * 100}%`,
+                                  transform: 'translateX(-50%)',
+                                },
+                      },
+                      `${hovered.day} · ${(hovered.tps ?? 0).toFixed(1)} tok/s`,
+                      ` · ${t('statsSpeedDetail', {
+                        tokens: formatTokensPrecise(hovered.outputTokens),
+                        seconds: hovered.seconds.toFixed(1),
+                      })}`,
+                    )
               const axis = h(
                 'div',
                 { key: 'axis', className: 'dsh-tokenlens-speed-axis', 'aria-hidden': 'true' },
                 h('span', { key: 'first' }, byDay[0].day),
-                byDay.length > 1 ? h('span', { key: 'peak' }, t('statsSpeedPeak', { tps: max.toFixed(1) })) : null,
                 byDay.length > 1 ? h('span', { key: 'last' }, byDay[byDay.length - 1].day) : null,
               )
-              return h('div', { key: 'plot', className: 'dsh-tokenlens-speed-plot' }, svg, axis)
+              return h(
+                'div',
+                { key: 'plot', className: 'dsh-tokenlens-speed-body' },
+                yAxis,
+                h(
+                  'div',
+                  {
+                    key: 'plotarea',
+                    className: 'dsh-tokenlens-speed-plot',
+                    'data-speed-plot': 'true',
+                    onMouseMove: handleMove,
+                    onMouseLeave: handleLeave,
+                    onPointerMove: handleMove,
+                    onPointerLeave: handleLeave,
+                  },
+                  svg,
+                  crosshair,
+                  marker,
+                  readout,
+                  axis,
+                ),
+              )
             })()
       return h(
         'div',

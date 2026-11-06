@@ -72,6 +72,14 @@ function todayAt(hour, minute = 0) {
   return date.getTime()
 }
 
+/** A local timestamp `days` days ago at `hour` (v1.7.2 window tests). */
+function daysAgoAt(days, hour, minute = 0) {
+  const date = new Date(NOW)
+  date.setDate(date.getDate() - days)
+  date.setHours(hour, minute, 0, 0)
+  return date.getTime()
+}
+
 test('usageOf extracts one normalized bucket and rejects non-usage events', () => {
   const usage = usageOf({ type: 'assistant/message', data: { usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 100, totalTokens: 115 } } })
   assert.deepEqual(usage, { input: 10, output: 5, cacheRead: 100, cacheWrite: 0, total: 115, messages: 1 })
@@ -884,6 +892,43 @@ test('a speed series with no paired steps is empty, not a crash (v1.7.0)', async
   assert.deepEqual(result.speed.byDay, [], 'no samples without step starts')
   assert.equal(result.speed.total.tps, null, 'no rate rather than Infinity')
   assert.equal(result.allTime.total, 60, 'tokens are still counted')
+})
+
+test('a subscription window starts on the plan purchase day (v1.7.2)', async (t) => {
+  const dshHome = await mkdtemp(join(tmpdir(), 'tokenlens-plan-'))
+  t.after(() => rm(dshHome, { recursive: true, force: true }))
+  const old = daysAgoAt(10, 14)
+  const boughtDay = daysAgoAt(1, 14)
+  await writeSession(dshHome, 'session-plan', [
+    sessionHeader(),
+    headerEvent(1, 'commandcode', 'deepseek-v4.1-flash'),
+    // Usage from BEFORE the plan was bought must stay out of the plan window.
+    usageEvent(2, old, { inputTokens: 0, outputTokens: 0, totalTokens: 100 }, { turn: 1, step: 1 }),
+    // Usage after the purchase counts.
+    usageEvent(3, boughtDay, { inputTokens: 0, outputTokens: 0, totalTokens: 30 }, { turn: 1, step: 2 }),
+    usageEvent(4, todayAt(13), { inputTokens: 0, outputTokens: 0, totalTokens: 20 }, { turn: 1, step: 3 }),
+  ])
+  const config = { stats: { ttlMs: 0, harnesses: { dsh: true, zcode: false, opencode: false, workbuddy: false, qoder: false } } }
+  const service = createUsageStats({ dshHome, config, log: { info() {}, warn() {} } })
+
+  const withoutPlan = await service.get({ fresh: true })
+  const plain = withoutPlan.providers.find((row) => row.providerId === 'commandcode')
+  assert.equal(plain.effectiveDays, 11, 'without a plan the window starts at the first-record day (inclusive)')
+
+  // The Host reports the day the plan was bought.
+  const planStart = dayKey(daysAgoAt(1, 0))
+  const withPlan = await service.get({ fresh: true, subscriptionStarts: { commandcode: planStart } })
+  const anchored = withPlan.providers.find((row) => row.providerId === 'commandcode')
+  assert.equal(anchored.effectiveDay, planStart, 'the window is anchored to the purchase day')
+  assert.equal(anchored.effectiveDays, 2, '今天 + the purchase day')
+  assert.equal(anchored.sinceEffective.total, 50, 'only the 30 + 20 recorded after the purchase')
+  assert.equal(anchored.allTime.total, 150, 'all-time still counts everything')
+
+  // The TPS series follows the same window.
+  assert.ok(
+    anchored.speed.byDay.every((entry) => entry.day >= planStart),
+    'no speed sample from before the purchase',
+  )
 })
 
 test('the 最近X天 window is capped at 30 days so label and numbers agree (v1.7.0)', async (t) => {

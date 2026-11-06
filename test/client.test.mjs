@@ -1890,9 +1890,14 @@ test('a picker alias reuses the canonical provider snapshot', async () => {
     await settle() // the apply-time default snapshot is on screen before the chip mounts
     const tree = await settleChip(plugin, 'deepseek-official')
     assert.match(textOf(tree), /¥2\.26/)
+    // v1.7.2: a model report legitimately refetches (the monthly allowance
+    // depends on it), so only a PROVIDER-driven refetch would be a regression.
     assert.equal(
       plugin.calls.some(
-        (call) => call.payload.action === 'snapshot' && call.payload.providerId === 'deepseek-official',
+        (call) =>
+          call.payload.action === 'snapshot' &&
+          call.payload.providerId === 'deepseek-official' &&
+          call.payload.modelId === undefined,
       ),
       false,
       'the canonical snapshot is reused instead of refetching the alias',
@@ -4097,6 +4102,58 @@ test('the dialog uses a balanced no-scrollbar two-row layout', () => {
   )
   assert.doesNotMatch(source, /\.dsh-tokenlens-providers\{display:flex/, 'the single-column flex override is gone')
   assert.match(source, /@media \(max-width:680px\)\{\.dsh-tokenlens-providers\{grid-template-columns:minmax\(0,1fr\)\}/, 'the provider grid collapses to one column when narrow')
+})
+
+test('the selected model rides along with every usage request (v1.7.2)', async () => {
+  const plugin = loadPlugin()
+  try {
+    await settleChip(plugin, 'commandcode')
+    // The dock stub reports `{provider, model: 'm'}` — the Host needs the model to
+    // resolve Command Code's per-model monthly allowance.
+    assert.ok(
+      plugin.calls.some((call) => call.payload.action === 'snapshot' && call.payload.modelId === 'm'),
+      'the snapshot request carries the selected model id',
+    )
+  } finally {
+    plugin.dispose()
+  }
+})
+
+test('the TPS curve carries a Y axis and a hover readout (v1.7.2)', async () => {
+  const plugin = loadPlugin()
+  try {
+    const tree = await settleDataDialog(plugin, 'opencode-go')
+    const section = findElement(tree, (element) => element.props?.['data-speed-section'] === 'true')
+    assert.ok(section, 'the speed section renders')
+
+    // A magnitude axis, like the native charts.
+    const yAxis = findElement(section, (element) => element.props?.className === 'dsh-tokenlens-speed-yaxis')
+    assert.ok(yAxis, 'the curve has a Y axis')
+    const ticks = findAll(yAxis, (element) => element.props?.className === 'dsh-tokenlens-chart-tick')
+    assert.equal(ticks.length, 3, 'max / half / zero')
+    assert.equal(textOf(ticks[0]), '100', 'the top tick is the peak rate (µ 100 tok/s in the fixture)')
+    assert.equal(textOf(ticks[2]), '0', 'the bottom tick is zero')
+
+    // Hovering the curve must show data instead of only a native tooltip.
+    const plot = findElement(section, (element) => element.props?.className === 'dsh-tokenlens-speed-plot')
+    assert.ok(plot, 'the plot area renders')
+    assert.equal(typeof plot.props.onMouseMove, 'function', 'mouse move is wired')
+    assert.equal(typeof plot.props.onMouseLeave, 'function', 'leaving clears the readout')
+    assert.equal(typeof plot.props.onPointerMove, 'function', 'pointer move is wired for touch/pen')
+    // No readout while nothing is hovered.
+    assert.equal(findElement(section, (element) => element.props?.['data-speed-readout'] === 'true'), undefined)
+    // The hover itself is state-driven (the store is internal), so the readout is
+    // asserted at source level: it exists, it names the day and the division, and
+    // it is fed by the same index the crosshair uses.
+    const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+    assert.match(source, /'data-speed-readout': 'true'/, 'a readout element exists')
+    assert.match(source, /statsSpeedDetail/, 'the readout shows the division behind the rate')
+    assert.match(source, /'data-speed-crosshair': String\(hoverIndex\)/, 'a crosshair follows the hover')
+    assert.match(source, /className: 'dsh-tokenlens-speed-dot'/, 'a marker sits on the hovered point')
+    assert.match(source, /function setSpeedHover\(/, 'the hover index lives in the store')
+  } finally {
+    plugin.dispose()
+  }
 })
 
 test('the chip uses a native title and the speed card is full width (v1.7.1)', async () => {

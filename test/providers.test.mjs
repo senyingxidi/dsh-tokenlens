@@ -137,7 +137,10 @@ test('parseCommandCode handles the live free-tier payload (no plan, no windows)'
   assert.equal(result.windows.monthly.used, undefined, 'no money when the API did not report it')
   assert.equal(result.windows.monthly.cap, undefined)
   assert.equal(result.windows.monthly.unit, undefined)
-  assert.deepEqual(result.credits, { remaining: 0, granted: null, purchased: 0 })
+  // v1.7.2: the credits object also carries the allowance basis.
+  assert.equal(result.credits.remaining, 0)
+  assert.equal(result.credits.granted, null)
+  assert.equal(result.credits.purchased, 0)
   assert.equal(result.account.userName, 'test-user')
 })
 
@@ -148,7 +151,10 @@ test('parseCommandCode maps a paid plan: 5-hour, weekly and monthly credit usage
   assert.equal(result.windows.weekly.percent, 40)
   assert.equal(result.windows.monthly.percent, 55, '(10 - 4.5) / 10')
   assert.equal(result.windows.monthly.resetsAt, '2026-11-09T00:00:00.000Z')
-  assert.deepEqual(result.credits, { remaining: 4.5, granted: 10, purchased: 0 })
+  assert.equal(result.credits.remaining, 4.5)
+  assert.equal(result.credits.granted, 10)
+  assert.equal(result.credits.poolUsd, 10, 'the pool is recorded alongside the allowance')
+  assert.equal(result.credits.allowanceBasis, 'pool', 'no model was selected, so the pool sizes the month')
   assert.equal(result.windows.rolling.resetsAt, new Date(1793000000 * 1000).toISOString())
   // Provider-native capacity in dollars travels with the window.
   assert.equal(result.windows.rolling.used, 0.5)
@@ -215,12 +221,10 @@ test('the monthly percentage is derived from remaining + period spend (v1.6.6)',
   assert.equal(parsed.credits.granted, parsed.windows.monthly.cap, 'the derived grant is reported on credits too')
 })
 
-test('the monthly denominator never follows the selected model (v1.6.6)', () => {
-  // GOAT advertises "up to $100" and per-model allowances ($100 on DeepSeek V4.1
-  // Flash, $60 on others) because the same credits stretch further on a discounted
-  // model — but the pool is ONE number. Dividing by a per-model figure would make
-  // the meter move when the user merely switches models, so the parser takes no
-  // model input at all and the derived pool stays 70 whatever was used.
+test('without a reported model the month is measured against the credit pool (v1.7.2)', () => {
+  // The per-model allowance needs the SELECTED model, which only arrives with the
+  // browser request. Without one the parser must not guess: the derived pool is
+  // used, so an older client keeps a stable denominator.
   const base = {
     credits: {
       credits: { monthlyCredits: 69.1272003646, purchasedCredits: 0 },
@@ -230,11 +234,64 @@ test('the monthly denominator never follows the selected model (v1.6.6)', () => 
     usageSummary: { totalMonthlyCredits: 0.8727996354 },
   }
   const parsed = parseCommandCode(base, NOW)
-  // 69.1272003646 + 0.8727996354 is exactly 70 — the pool, not a model allowance.
+  // 69.1272003646 + 0.8727996354 is exactly 70 — the pool.
   assert.equal(parsed.windows.monthly.cap, 70, 'the derived pool is exactly the plan pool')
-  // The per-model "$100" must NOT appear as a denominator.
-  assert.notEqual(parsed.windows.monthly.cap, 100)
-  assert.notEqual(parsed.windows.monthly.cap, 60)
+  assert.equal(parsed.credits.allowanceBasis, 'pool')
+  assert.equal(parsed.credits.allowanceModel, null)
+})
+
+test('a reported model sizes the month from its own allowance (v1.7.2)', () => {
+  // GOAT's pool is $70, but the console advertises $100 of usage on DeepSeek V4.1
+  // Flash because that model is discounted against the same credits. The user
+  // picks the model, so the month must be measured against ITS allowance.
+  const base = {
+    credits: {
+      credits: { monthlyCredits: 97.6321774324, purchasedCredits: 0 },
+      windowLimits: { limited: true, fiveHour: { cap: 14, used: 2.3678225676 }, weekly: { cap: 35, used: 2.3678225676 } },
+    },
+    subscription: { success: true, data: { planId: 'individual-goat', currentPeriodEnd: '2026-12-05T13:36:10.000Z' } },
+    usageSummary: { totalMonthlyCredits: 2.3678225676 },
+  }
+  const flash = parseCommandCode({ ...base, selectedModel: 'deepseek/deepseek-v4.1-flash' }, NOW)
+  assert.equal(flash.windows.monthly.cap, 100, 'DeepSeek V4.1 Flash gets $100 on GOAT')
+  assert.equal(flash.credits.granted, 100, 'the credits card agrees with the monthly row')
+  assert.equal(flash.credits.allowanceBasis, 'model')
+  assert.equal(flash.credits.allowanceModel, 'deepseek/deepseek-v4.1-flash')
+  assert.ok(Math.abs(flash.windows.monthly.used - 2.3678225676) < 1e-9, 'used is still the period spend')
+  assert.ok(Math.abs(flash.windows.monthly.percent - 2.3678) < 0.01, `percent was ${flash.windows.monthly.percent}`)
+  assert.equal(flash.credits.poolUsd, 100, 'the derived pool is kept for reference')
+
+  // A model with a smaller allowance is measured against that one instead.
+  const glm = parseCommandCode({ ...base, selectedModel: 'zai-org/GLM-5.2' }, NOW)
+  assert.equal(glm.windows.monthly.cap, 70, 'GLM-5.2 on GOAT is $70')
+
+  // A vendor-prefix-free id still matches, and an unknown model falls back to the
+  // pool rather than inventing an allowance.
+  const bare = parseCommandCode({ ...base, selectedModel: 'deepseek-v4.1-flash' }, NOW)
+  assert.equal(bare.windows.monthly.cap, 100, 'a bare model id matches too')
+  const unknown = parseCommandCode({ ...base, selectedModel: 'someone/unlisted-model' }, NOW)
+  assert.equal(unknown.credits.allowanceBasis, 'pool', 'an unlisted model keeps the pool')
+})
+
+test('the plan period start is reported so the stats window can anchor to it (v1.7.2)', () => {
+  const parsed = parseCommandCode(
+    {
+      ...structuredClone(COMMANDCODE_PAID),
+      subscription: {
+        success: true,
+        data: {
+          planId: 'individual-goat',
+          currentPeriodStart: '2026-11-05T13:36:10.000Z',
+          currentPeriodEnd: '2026-12-05T13:36:10.000Z',
+        },
+      },
+    },
+    NOW,
+  )
+  assert.deepEqual(parsed.period, {
+    start: '2026-11-05T13:36:10.000Z',
+    end: '2026-12-05T13:36:10.000Z',
+  })
 })
 
 test('a plan that reports its grant still wins over the derived pool', () => {
@@ -311,7 +368,8 @@ test('plan labels are documented ids only; grants are never guessed', () => {
   delete noGrant.credits.credits.monthlyCreditsGranted
   const noGrantParsed = parseCommandCode(noGrant, NOW)
   assert.equal(noGrantParsed.windows.monthly.percent, null)
-  assert.deepEqual(noGrantParsed.credits, { remaining: 4.5, granted: null, purchased: 0 })
+  assert.equal(noGrantParsed.credits.remaining, 4.5)
+  assert.equal(noGrantParsed.credits.granted, null)
 })
 
 test('canonicalProviderId maps picker ids onto adapters', () => {

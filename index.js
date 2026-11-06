@@ -84,7 +84,7 @@ export const inject = []
 export const PLUGIN_NAME = 'dsh-tokenlens'
 
 /** Plugin version; mirrors package.json (kept here so diagnostics need no fs read). */
-export const PLUGIN_VERSION = '1.7.1'
+export const PLUGIN_VERSION = '1.7.2'
 
 /** Documented defaults; every field of the raw row config is optional. */
 const DEFAULTS = {
@@ -299,6 +299,12 @@ export function apply(ctx, rawConfig) {
     keys: new Map(), // providerId 鈫?{ ref, source, detail } (never the secret)
     requestCounts: new Map(), // providerId 鈫?successful reads
     subscribers: new Set(),
+    // v1.7.2: the model the browser last reported per provider, so per-model
+    // monthly allowances resolve without a round-trip of their own.
+    selectedModels: new Map(),
+    // v1.7.2: providerId → local day ('YYYY-MM-DD') the current plan period
+    // started, used to anchor the 「最近X天（套餐购买日起算）」 statistics window.
+    subscriptionStarts: new Map(),
     client: null, // last browser `hello`
     // Optional startup update check (settings.updateCheck): the last result
     // `{current, latest, available, checkedAt, error}` or null before the first
@@ -1121,6 +1127,11 @@ export function apply(ctx, rawConfig) {
     const custom = effectiveCustomProvider(id)
     const mapping = dshRouteMapping(String(providerId))
     let provider = custom ?? dshRouteProviderConfig(String(providerId)) ?? effectiveProviderConfig(id)
+    // v1.7.2: the model the browser reported decides per-model allowances.
+    const selectedModel = state.selectedModels?.get(id) ?? ''
+    if (selectedModel !== '' && provider !== undefined) {
+      provider = { ...provider, selectedModel }
+    }
     if (provider === undefined || provider.enabled === false) {
       throw new UsageError('disabled', `provider ${JSON.stringify(providerId)} is disabled`, {
         retryable: false,
@@ -1297,6 +1308,10 @@ export function apply(ctx, rawConfig) {
     // into the snapshot so the dialog can show it without a second round-trip.
     recordDesignPlan(read.result.designPlan ?? null, now)
     const designPlan = await designPlanSummaryFor(providerId, read.result.designPlan)
+    // v1.7.2: remember when the current plan period began, so the local token
+    // statistics can be anchored to the purchase date ("套餐购买日起算") instead of
+    // to the first day this machine happened to record that provider.
+    rememberPeriodStart(providerId, read.result)
     return buildSnapshot({
       provider: providerInfo(providerId),
       plan: read.result.plan ?? null,
@@ -1455,6 +1470,30 @@ export function apply(ctx, rawConfig) {
     : null
 
   /** Token statistics for the dialog: today + all-time totals. */
+  /**
+   * Remember the local day the current plan period started (v1.7.2).
+   *
+   * The token statistics window is 「最近X天（套餐购买日起算）」, so it must start at
+   * the plan's period start — not at the first day this machine recorded the
+   * provider. Both providers that report a plan also report a period bound:
+   * Command Code in `subscription.data.currentPeriodStart`, Open Design in its
+   * Design Plan `periodStart`.
+   */
+  function rememberPeriodStart(providerId, result) {
+    const raw =
+      (typeof result?.period?.start === 'string' ? result.period.start : '') ||
+      (typeof result?.designPlan?.periodStart === 'string' ? result.designPlan.periodStart : '')
+    if (raw === '') return
+    const at = Date.parse(raw)
+    if (!Number.isFinite(at)) return
+    const date = new Date(at)
+    const day = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+    const id = canonicalProviderId(String(providerId))
+    if (state.subscriptionStarts.get(id) === day) return
+    state.subscriptionStarts.set(id, day)
+    noteStatus('subscription-period', { providerId: id, periodStartDay: day })
+  }
+
   /** Whether the last snapshot of this provider represents a subscription/plan. */
   function providerHasSubscription(providerId) {
     const cached = state.caches.get(canonicalProviderId(String(providerId)))
@@ -1583,7 +1622,11 @@ export function apply(ctx, rawConfig) {
       }
     }
     try {
-      const stats = await statsService.get({ fresh: options.fresh === true })
+      const stats = await statsService.get({
+        fresh: options.fresh === true,
+        // v1.7.2: anchor each subscription provider's window to its plan start.
+        subscriptionStarts: Object.fromEntries(state.subscriptionStarts),
+      })
       // v0.22.1: only subscription-backed providers use the 最近X天 window;
       // pay-as-you-go/balance providers keep the fixed 最近30天 column.
       const decorated =
@@ -1785,6 +1828,25 @@ export function apply(ctx, rawConfig) {
     ensurePoll()
   }
 
+  /**
+   * Remember the model the user picked, per provider (v1.7.2).
+   *
+   * The monthly allowance depends on it (Command Code's GOAT gives DeepSeek
+   * V4.1 Flash $100 while its credit pool is $70), so a model switch must also
+   * drop the cached snapshot — otherwise the chip would keep showing the old
+   * allowance until the next poll.
+   */
+  function rememberRequestedModel(body, providerId) {
+    const modelId = typeof body?.modelId === 'string' ? body.modelId.trim() : ''
+    if (modelId === '') return
+    const id = canonicalProviderId(providerId)
+    if (state.selectedModels.get(id) === modelId) return
+    state.selectedModels.set(id, modelId)
+    state.caches.delete(id)
+    state.flights.delete(id)
+    noteStatus('client-model', { providerId: id, modelId })
+  }
+
   /** One JSON request/response exchange with the browser half. */
   async function handleBridge(request) {
     let body
@@ -1870,10 +1932,12 @@ export function apply(ctx, rawConfig) {
       }
       if (action === 'snapshot' || action === 'status') {
         rememberRequestedProvider(body)
+        rememberRequestedModel(body, requestProvider(body))
         return json(await get(requestProvider(body)))
       }
       if (action === 'refresh') {
         rememberRequestedProvider(body)
+        rememberRequestedModel(body, requestProvider(body))
         return json(await get(requestProvider(body), { force: true }))
       }
       if (action === 'stats') return json(await getStats({ fresh: body?.fresh === true }))
