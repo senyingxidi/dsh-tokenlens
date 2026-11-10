@@ -4171,10 +4171,29 @@ test('the TPS curve carries a Y axis and a hover readout (v1.7.2)', async () => 
     // A magnitude axis, like the native charts.
     const yAxis = findElement(section, (element) => element.props?.className === 'dsh-tokenlens-speed-yaxis')
     assert.ok(yAxis, 'the curve has a Y axis')
-    const ticks = findAll(yAxis, (element) => element.props?.className === 'dsh-tokenlens-chart-tick')
-    assert.equal(ticks.length, 3, 'max / half / zero')
+    // v1.7.10: peak / trough / zero, each pinned to its guide line's height.
+    const ticks = findAll(
+      yAxis,
+      (element) => typeof element.props?.className === 'string' && element.props.className.includes('dsh-tokenlens-chart-tick'),
+    )
+    assert.equal(ticks.length, 3, 'peak / trough / zero')
     assert.equal(textOf(ticks[0]), '100', 'the top tick is the peak rate (µ 100 tok/s in the fixture)')
+    assert.equal(textOf(ticks[1]), '60', 'the middle tick is the trough (µ 60 tok/s)')
     assert.equal(textOf(ticks[2]), '0', 'the bottom tick is zero')
+    for (const tick of ticks) {
+      assert.match(String(tick.props.style?.top), /%$/, 'each tick is positioned at its own value')
+    }
+    // Peak and trough carry dashed guide lines into the plot.
+    const guides = findAll(section, (element) => element.props?.['data-guide'] !== undefined)
+    assert.equal(guides.length, 2, 'a guide line for the peak and one for the trough')
+    assert.deepEqual(
+      guides.map((element) => element.props['data-guide']),
+      ['100', '60'],
+      'the guides sit at the peak and trough values',
+    )
+    for (const guide of guides) {
+      assert.equal(guide.props['stroke-dasharray'], '2 3', 'the guides are dashed')
+    }
 
     // Hovering the curve must show data instead of only a native tooltip.
     const plot = findElement(section, (element) => element.props?.className === 'dsh-tokenlens-speed-plot')
@@ -4339,6 +4358,80 @@ test('a drilled day without hourly samples explains itself (v1.7.7)', async () =
       'an empty state replaces the chart',
     )
     assert.match(textOf(drilled), /没有可下钻的小时级样本/, 'and says why')
+  } finally {
+    plugin.dispose()
+  }
+})
+
+test('the TPS curve labels intermediate days and bridges hourly gaps (v1.7.10)', async () => {
+  // A 12-day series used to show only the first and last date; hourly gaps used
+  // to break the line with no explanation.
+  const longStats = statsFixture()
+  const days = Array.from({ length: 12 }, (_, index) => {
+    const date = new Date(Date.UTC(2026, 9, 14 + index))
+    const day = date.toISOString().slice(0, 10)
+    return { day, outputTokens: 1000, seconds: 10, tps: 100, steps: 1, ttftSeconds: 5, hours: null }
+  })
+  longStats.speed = { byDay: days, total: { outputTokens: 12000, seconds: 120, tps: 100, steps: 12, ttftSeconds: 60 } }
+  longStats.providers = longStats.providers.map((row) =>
+    row.providerId === 'opencode-go' ? { ...row, speed: longStats.speed } : row,
+  )
+  const plugin = loadPlugin((payload) => {
+    if (payload.action === 'hello') return { ok: true }
+    if (payload.action === 'stats') return { ok: true, stats: longStats }
+    if (payload.action === 'providers') return providersFixture()
+    return { ok: true, snapshot: snapshotFixture(payload.providerId) }
+  })
+  try {
+    const tree = await settleDataDialog(plugin, 'opencode-go')
+    const section = findElement(tree, (element) => element.props?.['data-speed-section'] === 'true')
+    const labels = findAll(section, (element) => element.props?.['data-speed-xlabel'] !== undefined)
+    assert.ok(labels.length > 2, `intermediate dates are labelled (got ${labels.length})`)
+    assert.ok(labels.length <= 7, 'but not so many that they collide')
+    assert.match(textOf(labels[0]), /^\d{2}-\d{2}$/, 'labels are MM-DD')
+    assert.equal(
+      labels.length,
+      chartXLabelIndicesForTest(12).length,
+      'the same index picker the token chart uses',
+    )
+
+    // Drill into a day whose hours have a hole: 9, 10, 14.
+    const gapped = statsFixture()
+    const slot = (tps, tokens, seconds) => ({ outputTokens: tokens, seconds, tps, steps: 1, ttftSeconds: 2 })
+    const hours = Array.from({ length: 24 }, () => null)
+    hours[9] = slot(80, 800, 10)
+    hours[10] = slot(90, 900, 10)
+    hours[14] = slot(100, 1000, 10)
+    gapped.providers = gapped.providers.map((row) =>
+      row.providerId === 'opencode-go'
+        ? { ...row, speed: { byDay: [{ ...row.speed.byDay[0], hours }], total: row.speed.total } }
+        : row,
+    )
+    const plugin2 = loadPlugin((payload) => {
+      if (payload.action === 'hello') return { ok: true }
+      if (payload.action === 'stats') return { ok: true, stats: gapped }
+      if (payload.action === 'providers') return providersFixture()
+      return { ok: true, snapshot: snapshotFixture(payload.providerId) }
+    })
+    try {
+      const gappedTree = await settleDataDialog(plugin2, 'opencode-go')
+      const dayColumn = findAll(gappedTree, (element) => element.props?.['data-speed-day'] !== undefined)[0]
+      dayColumn.props.onClick()
+      const drilled = dialogOf(plugin2).component({ sessionId: 'session-1', t: plugin2.t })
+      const gaps = findAll(drilled, (element) => element.props?.className === 'dsh-tokenlens-speed-gap')
+      assert.equal(gaps.length, 1, 'one dashed connector across the unmeasured hours')
+      assert.equal(gaps[0].props['stroke-dasharray'], '3 3', 'the connector is dashed, not solid')
+      const solids = findAll(drilled, (element) => element.props?.className === 'dsh-tokenlens-speed-line')
+      assert.equal(solids.length, 2, 'the measured runs stay solid')
+      const hourLabels = findAll(drilled, (element) => element.props?.['data-speed-xlabel'] !== undefined)
+      assert.deepEqual(
+        hourLabels.map((element) => textOf(element)),
+        ['00:00', '06:00', '12:00', '18:00', '23:00'],
+        'the hourly axis names the clock every six hours',
+      )
+    } finally {
+      plugin2.dispose()
+    }
   } finally {
     plugin.dispose()
   }
@@ -5773,6 +5866,16 @@ function switchToDataView(plugin, tree) {
 async function settleDataDialog(plugin, providerId = 'opencode-go') {
   const tree = await settleDialog(plugin, providerId)
   return switchToDataView(plugin, tree)
+}
+
+/** The client's X-label index picker, mirrored for assertions (count > 10). */
+function chartXLabelIndicesForTest(count) {
+  if (count <= 10) return Array.from({ length: count }, (_, index) => index)
+  const step = Math.max(1, Math.ceil((count - 1) / 5))
+  const indices = []
+  for (let index = 0; index < count; index += step) indices.push(index)
+  if (indices[indices.length - 1] !== count - 1) indices.push(count - 1)
+  return indices
 }
 
 /** Switch the rendered dialog to 全部 Harness scope and re-render it. */

@@ -3544,14 +3544,17 @@ window.__ModuleLoader__.load({
 .dsh-tokenlens-speed-svg{display:block;width:100%;height:96px;overflow:visible}
 /* v1.7.2: Y axis + hover readout for the TPS curve. */
 .dsh-tokenlens-speed-body{display:flex;gap:6px;align-items:stretch;min-width:0}
-.dsh-tokenlens-speed-yaxis{display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:1;font-variant-numeric:tabular-nums;flex:0 0 auto;padding:1px 0}
+/* v1.7.10: the axis labels are absolutely positioned against the plotted points. */
+.dsh-tokenlens-speed-yaxis{position:relative;display:block;min-width:26px;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:1;font-variant-numeric:tabular-nums;flex:0 0 auto}
+.dsh-tokenlens-speed-ytick{position:absolute;right:0;transform:translateY(-50%);max-width:100%}
 .dsh-tokenlens-speed-plot{position:relative;flex:1 1 auto;min-width:0}
 .dsh-tokenlens-speed-dot{position:absolute;width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;background:#2e9e5b;box-shadow:0 0 0 2px var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.35));pointer-events:none}
 /* v1.7.7: the daily curve is clickable (drills into that day's hours). */
 .dsh-tokenlens-speed-svg[data-speed-mode=day] rect[data-speed-day]{cursor:pointer}
 .dsh-tokenlens-link-button{border:0;background:none;padding:0 0 0 6px;color:var(--dsw-alias-label-secondary,currentColor);font:inherit;font-size:11px;line-height:inherit;text-decoration:underline;cursor:pointer}
 .dsh-tokenlens-link-button:hover,.dsh-tokenlens-link-button:focus-visible{color:var(--dsw-alias-label-primary,currentColor)}
-.dsh-tokenlens-speed-axis{display:flex;justify-content:space-between;gap:6px;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:1.2;font-variant-numeric:tabular-nums;min-width:0}
+.dsh-tokenlens-speed-axis{position:relative;height:13px;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:1.2;font-variant-numeric:tabular-nums;min-width:0}
+.dsh-tokenlens-speed-axis>span{position:absolute;top:0;transform:translateX(-50%);white-space:nowrap}
 .dsh-tokenlens-speed-axis>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media (max-width:680px){.dsh-tokenlens-chart-layout-row>*{flex-basis:100%!important}}
 .dsh-tokenlens-details-charts{min-width:0}
@@ -6297,26 +6300,37 @@ window.__ModuleLoader__.load({
         const height = 90
         const pad = 4
         const real = pointsSeries.filter((entry) => entry !== null)
-        const max = Math.max(...real.map((entry) => entry.tps ?? 0), 1)
+        const peak = Math.max(...real.map((entry) => entry.tps ?? 0), 1)
+        // v1.7.10: the trough gets its own guide line, so the axis states the
+        // real minimum instead of an implied zero baseline.
+        const trough = Math.min(...real.map((entry) => entry.tps ?? 0))
         const count = pointsSeries.length
         const stepX = count > 1 ? (width - pad * 2) / (count - 1) : 0
-        // A null slot (an hour with no sample) breaks the line instead of being
-        // drawn as a dip to zero, which would be a lie.
-        let segment = []
-        const segments = []
+        const xOf = (index) => (count > 1 ? pad + stepX * index : width / 2)
+        const yOf = (entry) => height - pad - ((entry.tps ?? 0) / peak) * (height - pad * 2)
+        // Measured runs become solid segments; a run of nulls is a GAP, which is
+        // bridged with a dashed connector (v1.7.10) — the line stays readable and
+        // the dash says "nothing measured here" instead of "the value is zero".
+        let run = []
+        const runs = []
+        const gaps = []
+        let previousMeasured = null
         pointsSeries.forEach((entry, index) => {
-          if (entry === null) {
-            if (segment.length > 0) segments.push(segment)
-            segment = []
+          if (entry === null || entry === undefined) {
+            if (run.length > 0) {
+              runs.push(run)
+              run = []
+            }
             return
           }
-          const x = count > 1 ? pad + stepX * index : width / 2
-          const y = height - pad - ((entry.tps ?? 0) / max) * (height - pad * 2)
-          segment.push({ x, y })
+          const point = { x: xOf(index), y: yOf(entry), index }
+          if (previousMeasured !== null && previousMeasured.index !== index - 1) {
+            gaps.push([previousMeasured, point])
+          }
+          run.push(point)
+          previousMeasured = point
         })
-        if (segment.length > 0) segments.push(segment)
-        const xOf = (index) => (count > 1 ? pad + stepX * index : width / 2)
-        const yOf = (entry) => height - pad - ((entry.tps ?? 0) / max) * (height - pad * 2)
+        if (run.length > 0) runs.push(run)
         const columnWidth = count > 1 ? stepX : width - pad * 2
         const columns = pointsSeries.map((entry, index) => {
           if (entry === null) return null
@@ -6350,7 +6364,7 @@ window.__ModuleLoader__.load({
             h('title', { key: 'tip' }, label),
           )
         })
-        const lineNodes = segments.map((segment, index) => {
+        const lineNodes = runs.map((segment, index) => {
           const line = segment.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' ')
           const area =
             segment.length > 1
@@ -6380,6 +6394,47 @@ window.__ModuleLoader__.load({
             }),
           ].filter(Boolean)
         })
+        // v1.7.10: a GAP is bridged with a dashed connector. Solid = measured,
+        // dashed = nothing measured in between, which is exactly what a broken
+        // line fails to say.
+        const gapNodes = gaps.map(([from, to], index) =>
+          h('polyline', {
+            key: `gap-${index}`,
+            className: 'dsh-tokenlens-speed-gap',
+            points: `${from.x.toFixed(1)},${from.y.toFixed(1)} ${to.x.toFixed(1)},${to.y.toFixed(1)}`,
+            fill: 'none',
+            stroke: '#2e9e5b',
+            'stroke-width': '1.2',
+            'stroke-dasharray': '3 3',
+            'stroke-opacity': '.55',
+            'vector-effect': 'non-scaling-stroke',
+            'aria-hidden': 'true',
+          }),
+        )
+        // v1.7.10: peak / trough guide lines, so the curve reads against the axis.
+        const guideOf = (value, key, y) =>
+          h('line', {
+            key,
+            className: 'dsh-tokenlens-speed-guide',
+            x1: '0',
+            x2: String(width),
+            y1: y.toFixed(1),
+            y2: y.toFixed(1),
+            stroke: '#2e9e5b',
+            'stroke-width': '1',
+            'stroke-dasharray': '2 3',
+            'stroke-opacity': '.5',
+            'vector-effect': 'non-scaling-stroke',
+            'data-guide': String(value),
+            'aria-hidden': 'true',
+          })
+        const peakY = yOf({ tps: peak })
+        const troughY = yOf({ tps: trough })
+        const guides = [
+          guideOf(peak, 'guide-peak', peakY),
+          // Skip the trough line when it sits on top of the peak (a flat series).
+          Math.abs(troughY - peakY) < 3 ? null : guideOf(trough, 'guide-trough', troughY),
+        ].filter(Boolean)
         const svg = h(
           'svg',
           {
@@ -6391,7 +6446,9 @@ window.__ModuleLoader__.load({
             role: 'img',
             'aria-label': dailyMode ? t('statsSpeedTitle') : t('statsSpeedHourAria', { date: drilled.day }),
           },
+          guides,
           lineNodes.flat(),
+          gapNodes,
           columns.filter(Boolean),
         )
         const hoverIndex =
@@ -6404,13 +6461,26 @@ window.__ModuleLoader__.load({
           if (index !== null && pointsSeries[index] !== null) setSpeedHover(index)
         }
         const handleLeave = () => setSpeedHover(null)
-        const ticks = [max, max / 2, 0]
+        // v1.7.10: the axis labels are PINNED to the guide lines' y positions
+        // (peak, trough, zero) instead of being evenly distributed, so each dashed
+        // line has its value next to it.
+        const axisTick = (value, y, key) =>
+          h(
+            'span',
+            {
+              key,
+              className: 'dsh-tokenlens-chart-tick dsh-tokenlens-speed-ytick',
+              'data-speed-ytick': String(value),
+              style: { top: `${(y / height) * 100}%` },
+            },
+            `${Math.round(value)}`,
+          )
         const yAxis = h(
           'div',
           { key: 'y', className: 'dsh-tokenlens-speed-yaxis', 'aria-hidden': 'true' },
-          ticks.map((value, index) =>
-            h('span', { key: `tick-${index}`, className: 'dsh-tokenlens-chart-tick' }, `${Math.round(value)}`),
-          ),
+          axisTick(peak, peakY, 'tick-peak'),
+          Math.abs(troughY - peakY) < 3 ? null : axisTick(trough, troughY, 'tick-trough'),
+          axisTick(0, height - pad, 'tick-zero'),
         )
         const crosshair =
           hovered === null || hovered === undefined
@@ -6465,11 +6535,30 @@ window.__ModuleLoader__.load({
                   ? ` · ${t('statsSpeedTtft', { seconds: (hovered.ttftSeconds / hovered.steps).toFixed(1) })}`
                   : null,
               )
+        // v1.7.10: labels are placed under their OWN point (not just first/last),
+        // so a 6-day curve shows all six dates; an hourly curve shows the clock
+        // every 6 hours. Reuses the token chart's index picker for consistency.
+        const labelIndices = dailyMode
+          ? chartXLabelIndices(count)
+          : [0, 6, 12, 18, 23].filter((index) => index < count)
         const axis = h(
           'div',
           { key: 'axis', className: 'dsh-tokenlens-speed-axis', 'aria-hidden': 'true' },
-          h('span', { key: 'first' }, dailyMode ? (pointsSeries[0]?.day ?? '') : '00:00'),
-          h('span', { key: 'last' }, dailyMode ? (pointsSeries[count - 1]?.day ?? '') : '23:00'),
+          labelIndices.map((index) => {
+            const entry = pointsSeries[index]
+            const text = dailyMode
+              ? (entry?.day ?? '').slice(5)
+              : `${String(index).padStart(2, '0')}:00`
+            return h(
+              'span',
+              {
+                key: `x-${index}`,
+                'data-speed-xlabel': String(index),
+                style: { left: `${(xOf(index) / width) * 100}%` },
+              },
+              text,
+            )
+          }),
         )
         return h(
           'div',
