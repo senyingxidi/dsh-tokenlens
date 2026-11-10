@@ -230,7 +230,8 @@ window.__ModuleLoader__.load({
       statsLast30Days: '最近30天',
       statsSpeedTitle: '输出速度（TPS）',
       statsSpeedHint:
-        '输出 Token ÷ 模型自身耗时（step 开始到消息返回）；不含工具调用等待，但输出含思考 Token。点击曲线上的某一天可查看该日的小时级速度',
+        '输出 Token ÷ 纯解码时长（首个 token 到达 → 消息结束），与 DSH 会话统计同口径；首 token 等待单独列出。点击曲线上的某一天可查看该日的小时级速度',
+      statsSpeedTtft: '首 token 均值 {seconds}s',
       statsSpeedTotal: '均值 {tps} tok/s',
       statsSpeedPeak: '峰值 {tps} tok/s',
       statsSpeedEmpty: '暂无可计算的速度样本（需要 step 计时数据）',
@@ -513,7 +514,8 @@ window.__ModuleLoader__.load({
       statsLast30Days: 'Last 30 days',
       statsSpeedTitle: 'Output speed (TPS)',
       statsSpeedHint:
-        'Output tokens ÷ the model’s own request time (step start to message); tool waits excluded, reasoning tokens included. Click a day on the curve for that day’s hourly speed',
+        'Output tokens ÷ pure decode time (first token → message end), the same pairing as the harness session stats; the first-token wait is listed separately. Click a day on the curve for that day’s hourly speed',
+      statsSpeedTtft: 'first token avg {seconds}s',
       statsSpeedTotal: 'avg {tps} tok/s',
       statsSpeedPeak: 'peak {tps} tok/s',
       statsSpeedEmpty: 'No speed samples yet (needs step timing data)',
@@ -1638,6 +1640,7 @@ window.__ModuleLoader__.load({
                       seconds: numberOrNull(cell.seconds) ?? 0,
                       tps,
                       steps: numberOrNull(cell.steps) ?? 0,
+                      ttftSeconds: numberOrNull(cell.ttftSeconds) ?? 0,
                     }
                   })
                 : null
@@ -1647,6 +1650,8 @@ window.__ModuleLoader__.load({
                 seconds: numberOrNull(entry.seconds) ?? 0,
                 tps: numberOrNull(entry.tps),
                 steps: numberOrNull(entry.steps) ?? 0,
+                // v1.7.9: the first-token wait the decode-only rate excludes.
+                ttftSeconds: numberOrNull(entry.ttftSeconds) ?? 0,
                 hours: hours === null ? null : hours.slice(0, 24),
               }
             })
@@ -1660,6 +1665,7 @@ window.__ModuleLoader__.load({
           seconds: numberOrNull(totalRaw.seconds) ?? 0,
           tps: numberOrNull(totalRaw.tps),
           steps: numberOrNull(totalRaw.steps) ?? 0,
+          ttftSeconds: numberOrNull(totalRaw.ttftSeconds) ?? 0,
         },
       }
     }
@@ -3679,6 +3685,8 @@ window.__ModuleLoader__.load({
 .dsh-tokenlens-repo{display:inline-flex;align-items:center;gap:4px;color:inherit;text-decoration:none;flex:0 0 auto;border-radius:var(--dsw-radius-sm);transition:color .12s ease,opacity .12s ease}
 .dsh-tokenlens-repo:hover,.dsh-tokenlens-repo:focus-visible{color:var(--dsw-alias-label-primary,currentColor);opacity:1;text-decoration:underline}
 .dsh-tokenlens-version-text{flex:0 0 auto}
+/* v1.7.9: the first-token wait sits beside the rate, visually secondary. */
+.dsh-tokenlens-speed-ttft{margin-left:8px;opacity:.8;white-space:nowrap}
 /* Update status on the plugin-version line (dialog body): wraps on narrow screens. */
 .dsh-tokenlens-version-update{white-space:normal;overflow-wrap:anywhere}
 .dsh-tokenlens-version .dsh-tokenlens-update-link{color:inherit;font-size:inherit;vertical-align:baseline}
@@ -6239,6 +6247,21 @@ window.__ModuleLoader__.load({
                 'span',
                 { className: 'dsh-tokenlens-hint', 'data-speed-total': String(series.total.tps) },
                 t('statsSpeedTotal', { tps: series.total.tps.toFixed(1) }),
+                // v1.7.9: the wait the decode-only rate leaves out, stated rather
+                // than hidden — it is often several seconds per step.
+                series.total.steps > 0 && series.total.ttftSeconds > 0
+                  ? h(
+                      'span',
+                      {
+                        key: 'ttft',
+                        className: 'dsh-tokenlens-speed-ttft',
+                        'data-speed-ttft': String(series.total.ttftSeconds),
+                      },
+                      t('statsSpeedTtft', {
+                        seconds: (series.total.ttftSeconds / series.total.steps).toFixed(1),
+                      }),
+                    )
+                  : null,
               )
             : null
           : h(
@@ -6437,6 +6460,10 @@ window.__ModuleLoader__.load({
                   tokens: formatTokensPrecise(hovered.outputTokens),
                   seconds: hovered.seconds.toFixed(1),
                 })}`,
+                // v1.7.9: the first-token wait, when this bucket has samples.
+                hovered.steps > 0 && hovered.ttftSeconds > 0
+                  ? ` · ${t('statsSpeedTtft', { seconds: (hovered.ttftSeconds / hovered.steps).toFixed(1) })}`
+                  : null,
               )
         const axis = h(
           'div',

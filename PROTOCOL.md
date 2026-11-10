@@ -383,24 +383,28 @@ with `[path]`.
                            "hours": [0, 0, 0, 500, 734, …] }
         } }
     ],
-    // v1.7.0: output-speed (TPS) series. `tps` is output tokens over the summed
-    // model time of the steps that produced them (`step/start` ->
-    // `assistant/message`), so a step's tool calls — which are emitted after the
-    // message — do not dilute it. A day with no positive duration is omitted
-    // instead of being given an infinite rate. `total.tps` is null when the
-    // window holds no samples. Each provider row carries its own `speed` object
-    // with the same shape, following the same window as its tokens (v1.7.2).
+    // v1.7.0: output-speed (TPS) series. v1.7.9 CHANGED the denominator: `tps`
+    // is output tokens over the summed DECODE time of the steps that produced
+    // them (`first streamed token` -> `assistant/message`), which is the same
+    // pairing the harness's own session statistics and the 上下文洞察 plugin use.
+    // The prefill/queue wait it therefore excludes is reported separately as
+    // `ttftSeconds` (summed first-token waits for the bucket), so the card can
+    // show it instead of hiding it. A day with no positive decode time, or a
+    // step whose first-token instant is unknown, is omitted rather than given an
+    // invented duration. Each provider row carries its own `speed` object with
+    // the same shape, following the same window as its tokens (v1.7.2).
     "speed": {
       "byDay": [
-        { "day": "2026-11-05", "outputTokens": 516951, "seconds": 8493.1,
-          "tps": 60.9, "steps": 859,
+        { "day": "2026-11-05", "outputTokens": 516951, "seconds": 3201.4,
+          "tps": 161.5, "steps": 859, "ttftSeconds": 4604.1,
           // v1.7.7: 24 local-hour slots for the click-to-drill-down view. A slot
           // with no sample is null rather than a zero, so the curve breaks
           // instead of dipping to zero. Only provider-scoped series carry it.
           "hours": [ null, null, …, { "outputTokens": 600, "seconds": 5,
-                                      "tps": 120, "steps": 1 }, … ] }
+                                      "tps": 120, "steps": 1, "ttftSeconds": 4.5 }, … ] }
       ],
-      "total": { "outputTokens": 939643, "seconds": 14123.9, "tps": 66.5, "steps": 1424 }
+      "total": { "outputTokens": 939643, "seconds": 5819.8, "tps": 161.5,
+                 "steps": 1424, "ttftSeconds": 7676.3 }
     },
     "zcode": {                                  // extra-harness detail
       "dbPath": "C:\\Users\\…\\.zcode\\cli\\db\\db.sqlite",

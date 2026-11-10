@@ -352,6 +352,8 @@ function statsFixture(overrides = {}) {
         seconds: 20,
         tps: 100,
         steps: 12,
+        // v1.7.9: the first-token wait the decode-only rate excludes.
+        ttftSeconds: 30,
         hours: speedHoursOf([
           [9, 120, 600, 5],
           [14, 80, 1400, 15],
@@ -363,10 +365,11 @@ function statsFixture(overrides = {}) {
         seconds: 25,
         tps: 60,
         steps: 9,
+        ttftSeconds: 25,
         hours: speedHoursOf([[11, 60, 1500, 25]]),
       },
     ],
-    total: { outputTokens: 3500, seconds: 45, tps: 77.8, steps: 21 },
+    total: { outputTokens: 3500, seconds: 45, tps: 77.8, steps: 21, ttftSeconds: 55 },
   }
   return {
     version: 3,
@@ -4387,6 +4390,12 @@ test('the output-speed (TPS) trend renders as a line under the details (v1.7.1)'
     assert.match(text, /均值 77\.8 tok\/s/, 'the provider-scoped overall rate is stated')
     // v1.7.8: a hidden drill-down is a dead feature — the hint must say it exists.
     assert.match(text, /点击曲线上的某一天/, 'the daily hint advertises the hourly drill-down')
+    // v1.7.9: the decode-only rate excludes the first-token wait, which is then
+    // stated explicitly instead of being silently dropped.
+    assert.match(text, /纯解码时长/, 'the hint names the decode window it divides by')
+    const ttft = findElement(section, (element) => element.props?.['data-speed-ttft'] !== undefined)
+    assert.ok(ttft, 'the first-token wait is shown')
+    assert.match(textOf(ttft), /首 token 均值 2\.6s/, '55s over 21 steps')
 
     // v1.7.1: a curve, not bars — one polyline plus a filled area.
     const line = findElement(section, (element) => element.props?.className === 'dsh-tokenlens-speed-line')

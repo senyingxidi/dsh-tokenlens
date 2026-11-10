@@ -465,8 +465,8 @@ test('cache file is written and reused by a second service instance', async (t) 
   assert.equal(result.scan.reused, 1, 'an unchanged file comes from the persisted cache')
   const raw = JSON.parse(await readFile(join(dshHome, 'dsh-tokenlens', 'usage-cache.json'), 'utf8'))
   // v1.7.0 bumped the schema: the cache now carries per-day output-speed samples.
-  // v1.7.7 bumped it again: it also carries per-hour speed samples.
-  assert.equal(raw.version, 7)
+  // v1.7.7 added per-hour speed samples; v1.7.9 added the first-token wait.
+  assert.equal(raw.version, 8)
   assert.ok(Object.keys(raw.files).length === 1)
 })
 
@@ -835,20 +835,31 @@ test('malicious provider ids cannot pollute Object.prototype', () => {
   assert.equal(Object.prototype.hasOwnProperty('input'), before !== undefined)
 })
 
-test('output speed (TPS) pairs step/start with assistant/message (v1.7.0)', async (t) => {
+test('output speed uses the decode window and reports the first-token wait (v1.7.9)', async (t) => {
   const dshHome = await mkdtemp(join(tmpdir(), 'tokenlens-tps-'))
   t.after(() => rm(dshHome, { recursive: true, force: true }))
   const base = todayAt(14)
+  // `stream` carries the first-token instant, which is what the decode-only rate
+  // divides by (same pairing as the harness session stats / 上下文洞察).
+  const streamAt = (firstTokenAt) => [{ type: 'chunk', time: firstTokenAt, chunk: { type: 'text', index: 0 } }]
   await writeSession(dshHome, 'session-tps', [
     sessionHeader(),
     headerEvent(1, 'commandcode', 'deepseek-v4.1-flash'),
-    // Step 1: 100 output tokens over 2s -> 50 tok/s.
+    // Step 1: first token after 1.5s, message at 2.0s -> 0.5s decode, 100 tok = 200 tok/s.
     stepStartEvent(2, base, 1, 1),
-    usageEvent(3, base + 2000, { inputTokens: 10, outputTokens: 100, totalTokens: 110 }, { turn: 1, step: 1 }),
-    // Step 2: 300 output tokens over 1s -> 300 tok/s. Combined: 400 tok / 3s.
+    usageEvent(3, base + 2000, { inputTokens: 10, outputTokens: 100, totalTokens: 110 }, {
+      turn: 1,
+      step: 1,
+      stream: streamAt(base + 1500),
+    }),
+    // Step 2: first token after 0.5s, message at 1.0s -> 0.5s decode, 300 tok = 600 tok/s.
     stepStartEvent(4, base + 3000, 1, 2),
-    usageEvent(5, base + 4000, { inputTokens: 10, outputTokens: 300, totalTokens: 310 }, { turn: 1, step: 2 }),
-    // Step 3 has no step/start: it must not contribute a bogus duration.
+    usageEvent(5, base + 4000, { inputTokens: 10, outputTokens: 300, totalTokens: 310 }, {
+      turn: 1,
+      step: 2,
+      stream: streamAt(base + 3500),
+    }),
+    // Step 3 has no stream timing: it must not invent a decode window.
     usageEvent(6, base + 6000, { inputTokens: 10, outputTokens: 999, totalTokens: 1009 }, { turn: 1, step: 3 }),
   ])
   const stats = createUsageStats({
@@ -861,18 +872,20 @@ test('output speed (TPS) pairs step/start with assistant/message (v1.7.0)', asyn
   assert.ok(result.speed, 'the wire carries a speed series')
   assert.equal(result.speed.byDay.length, 1, 'one day with samples')
   const day = result.speed.byDay[0]
-  assert.equal(day.outputTokens, 400, 'only paired steps count output')
-  assert.equal(day.seconds, 3, 'durations are summed in seconds')
-  assert.equal(day.tps, 133.3, '400 tokens over 3s')
+  assert.equal(day.outputTokens, 400, 'only steps with a first-token instant count')
+  assert.equal(day.seconds, 1, 'the denominator is the DECODE window, not the whole step')
+  assert.equal(day.tps, 400, '400 tokens over 1s of decoding')
   assert.equal(day.steps, 2, 'two paired steps')
-  assert.equal(result.speed.total.tps, 133.3)
+  assert.equal(day.ttftSeconds, 2, 'the excluded waits are kept: 1.5s + 0.5s')
+  assert.equal(result.speed.total.tps, 400)
+  assert.equal(result.speed.total.ttftSeconds, 2)
 
   // The provider row carries its own series for the scope switch.
   const provider = result.providers.find((row) => row.providerId === 'commandcode')
   assert.ok(provider?.speed, 'the provider row carries a speed series')
-  assert.equal(provider.speed.total.tps, 133.3)
-  // The unpaired 999-token message never appears as speed: 400, not 1399.
-  assert.equal(provider.speed.total.outputTokens, 400, 'an unpaired message must not invent a duration')
+  assert.equal(provider.speed.total.tps, 400)
+  // The unpaired 999-token message never appears: 400, not 1399.
+  assert.equal(provider.speed.total.outputTokens, 400, 'a step without stream timing must not invent a duration')
 })
 
 test('output speed is also bucketed per local hour for the drill-down (v1.7.7)', async (t) => {
@@ -880,15 +893,24 @@ test('output speed is also bucketed per local hour for the drill-down (v1.7.7)',
   t.after(() => rm(dshHome, { recursive: true, force: true }))
   const nine = todayAt(9, 30)
   const fourteen = todayAt(14, 10)
+  const streamAt = (firstTokenAt) => [{ type: 'chunk', time: firstTokenAt, chunk: { type: 'text', index: 0 } }]
   await writeSession(dshHome, 'session-tps-hour', [
     sessionHeader(),
     headerEvent(1, 'commandcode', 'deepseek-v4.1-flash'),
-    // 09:30 — 600 output tokens over 5s (120 tok/s).
+    // 09:30 — first token after 4.5s, message at 5.0s -> 0.5s decode, 600 tok = 1200 tok/s.
     stepStartEvent(2, nine, 1, 1),
-    usageEvent(3, nine + 5000, { inputTokens: 0, outputTokens: 600, totalTokens: 600 }, { turn: 1, step: 1 }),
-    // 14:10 — 1400 output tokens over 20s (70 tok/s).
+    usageEvent(3, nine + 5000, { inputTokens: 0, outputTokens: 600, totalTokens: 600 }, {
+      turn: 1,
+      step: 1,
+      stream: streamAt(nine + 4500),
+    }),
+    // 14:10 — first token after 15s, message at 20s -> 5s decode, 1400 tok = 280 tok/s.
     stepStartEvent(4, fourteen, 1, 2),
-    usageEvent(5, fourteen + 20000, { inputTokens: 0, outputTokens: 1400, totalTokens: 1400 }, { turn: 1, step: 2 }),
+    usageEvent(5, fourteen + 20000, { inputTokens: 0, outputTokens: 1400, totalTokens: 1400 }, {
+      turn: 1,
+      step: 2,
+      stream: streamAt(fourteen + 15000),
+    }),
   ])
   const stats = createUsageStats({
     dshHome,
@@ -900,17 +922,20 @@ test('output speed is also bucketed per local hour for the drill-down (v1.7.7)',
   const day = provider.speed.byDay[0]
   assert.ok(Array.isArray(day.hours), 'the day carries 24 local-hour slots')
   assert.equal(day.hours.length, 24)
-  assert.equal(day.hours[9].tps, 120, '09:xx keeps its own rate')
+  assert.equal(day.hours[9].tps, 1200, '09:xx keeps its own decode rate')
   assert.equal(day.hours[9].outputTokens, 600)
-  assert.equal(day.hours[14].tps, 70, '14:xx keeps its own rate')
-  assert.equal(day.hours[14].seconds, 20)
+  assert.equal(day.hours[9].ttftSeconds, 4.5, 'and its own first-token wait')
+  assert.equal(day.hours[14].tps, 280, '14:xx keeps its own decode rate')
+  assert.equal(day.hours[14].seconds, 5)
+  assert.equal(day.hours[14].ttftSeconds, 15)
   // Hours without a sample are null rather than a fabricated zero, so the chart
   // can break the line instead of drawing a dip.
   assert.equal(day.hours[11], null, 'an hour with no sample is empty')
   assert.equal(day.hours[0], null)
   // The day itself still aggregates both hours.
   assert.equal(day.outputTokens, 2000)
-  assert.equal(day.seconds, 25)
+  assert.equal(day.seconds, 5.5)
+  assert.equal(day.ttftSeconds, 19.5)
 })
 
 test('a speed series with no paired steps is empty, not a crash (v1.7.0)', async (t) => {
