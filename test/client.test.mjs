@@ -4311,17 +4311,23 @@ test('clicking a point on the TPS curve drills into that day\'s hours (v1.7.7)',
 
     day.props.onClick()
     const drilled = dialogOf(plugin).component({ sessionId: 'session-1', t: plugin.t })
-    const svg = findElement(drilled, (element) => element.props?.className === 'dsh-tokenlens-speed-svg')
-    assert.equal(svg.props['data-speed-mode'], 'hour', 'the chart switches to hourly mode')
+    // v1.7.12: the hourly view is the SAME bar plot the token chart uses, so it
+    // renders all 24 slots like that chart does — an unmeasured hour keeps a
+    // zero-height slot but is marked as having no sample.
+    const drillPlot = findElement(drilled, (element) => element.props?.['data-speed-plot'] === 'true')
+    assert.ok(drillPlot, 'the chart switches to the hourly bar plot')
     assert.match(textOf(drilled), /2026-10-24 · 小时级/, 'the header names the drilled day')
-    const hours = findAll(drilled, (element) => element.props?.['data-speed-hour'] !== undefined)
+    const hourSlots = findAll(drilled, (element) => element.props?.['data-speed-bar'] !== undefined)
+    assert.equal(hourSlots.length, 24, 'the hourly plot has one slot per hour, like the token chart')
+    const measured = hourSlots.filter((element) => element.props['data-sample-tier'] !== 'none')
     assert.deepEqual(
-      hours.map((element) => element.props['data-speed-hour']),
+      measured.map((element) => element.props['data-speed-bar']),
       ['9', '14'],
-      'only the hours with samples are hoverable',
+      'only the hours with samples carry a bar',
     )
-    const tip = findElement(hours[0], (element) => element.type === 'title')
-    assert.match(textOf(tip), /09:00 · 120\.0 tok\/s/, 'the tooltip names the hour and its rate')
+    // The shared plot carries its tooltip as a native title attribute (the same
+    // way the token chart's bars do).
+    assert.match(String(measured[0].props.title), /09:00 · 120\.0 tok\/s/, 'the tooltip names the hour and its rate')
 
     // The header offers a way back, and clicking the same day toggles out too.
     const back = findElement(drilled, (element) => element.props?.['data-speed-back'] === 'true')
@@ -4419,11 +4425,14 @@ test('the TPS curve labels intermediate days and bridges hourly gaps (v1.7.10)',
       dayColumn.props.onClick()
       const drilled = dialogOf(plugin2).component({ sessionId: 'session-1', t: plugin2.t })
 
-      // v1.7.11: hourly is a BAR chart — an unmeasured hour has no bar, which
-      // states the gap without bridging it with a line.
+      // v1.7.12: hourly is the token chart's bar plot. Every hour keeps a slot
+      // (like that chart), but only measured hours carry a bar; the empty slots
+      // are marked so the pointer ignores them.
       const bars = findAll(drilled, (element) => element.props?.['data-speed-bar'] !== undefined)
+      assert.equal(bars.length, 24, 'one slot per hour')
+      const filled = bars.filter((element) => element.props['data-sample-tier'] !== 'none')
       assert.deepEqual(
-        bars.map((element) => element.props['data-speed-bar']),
+        filled.map((element) => element.props['data-speed-bar']),
         ['9', '10', '14'],
         'one bar per measured hour, none for the empty ones',
       )
@@ -4432,16 +4441,25 @@ test('the TPS curve labels intermediate days and bridges hourly gaps (v1.7.10)',
         0,
         'no curve in hourly mode',
       )
-      assert.equal(
-        findAll(drilled, (element) => element.props?.className === 'dsh-tokenlens-speed-gap').length,
-        0,
-        'no dashed connector is needed once gaps are simply absent',
-      )
       // The fill encodes sample size, so a 1-step bar cannot look authoritative.
       assert.deepEqual(
-        bars.map((element) => element.props['data-sample-tier']),
+        filled.map((element) => element.props['data-sample-tier']),
         ['high', 'mid', 'low'],
         '30 steps solid, 8 mid, 1 outline-only',
+      )
+      // The bar geometry and grid come from the shared plot, not a private SVG.
+      assert.ok(
+        findElement(drilled, (element) => element.props?.['data-chart-plot'] === 'true'),
+        'the shared chart plot renders',
+      )
+      assert.ok(
+        findAll(drilled, (element) => element.props?.['data-chart-gridline'] !== undefined).length > 0,
+        'the shared grid lines are used',
+      )
+      assert.equal(
+        findAll(drilled, (element) => element.props?.['data-guide'] !== undefined).length,
+        0,
+        'no SVG guide lines: the shared plot draws grid lines instead',
       )
       const legend = findElement(drilled, (element) => element.props?.['data-speed-legend'] === 'true')
       assert.ok(legend, 'the bar fill needs a key')
@@ -4450,17 +4468,11 @@ test('the TPS curve labels intermediate days and bridges hourly gaps (v1.7.10)',
         3,
         'three sample tiers are explained',
       )
-      // Bars are read against zero, so only the peak ruler is drawn.
-      assert.equal(
-        findAll(drilled, (element) => element.props?.['data-guide'] !== undefined).length,
-        1,
-        'one guide line (the peak)',
-      )
       const hourLabels = findAll(drilled, (element) => element.props?.['data-speed-xlabel'] !== undefined)
       assert.deepEqual(
         hourLabels.map((element) => textOf(element)),
-        ['00:00', '06:00', '12:00', '18:00', '23:00'],
-        'the hourly axis names the clock every six hours',
+        ['00:00', '05:00', '10:00', '15:00', '20:00', '23:00'],
+        'the hourly axis uses the same label picker as the token chart',
       )
     } finally {
       plugin2.dispose()
