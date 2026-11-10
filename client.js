@@ -236,7 +236,13 @@ window.__ModuleLoader__.load({
       statsSpeedPeak: '峰值 {tps} tok/s',
       statsSpeedEmpty: '暂无可计算的速度样本（需要 step 计时数据）',
       statsSpeedHourTitle: '{date} · 小时级',
-      statsSpeedHourHint: '同一天按本地小时切分；仍是输出 Token ÷ 模型自身耗时，无样本的小时留空',
+      statsSpeedHourHint:
+        '同一天按本地小时切分：每根柱子是该小时的平均速度，没有柱子的时段表示当时没有样本（未测量），柱子颜色越浅表示参与计算的 step 越少',
+      statsSpeedSamples: '样本量',
+      statsSpeedSamplesHigh: '≥20 step',
+      statsSpeedSamplesMid: '3–19',
+      statsSpeedSamplesLowLabel: '1–2（参考）',
+      statsSpeedSamplesLow: '仅 {steps} 个 step，仅供参考',
       statsSpeedHourEmpty: '该日没有可下钻的小时级样本',
       statsSpeedHourBarTitle: '{hour} · {tps} tok/s（{tokens} 输出 ÷ {seconds}s）',
       statsSpeedHourAria: '{date} 的小时级输出速度',
@@ -521,7 +527,12 @@ window.__ModuleLoader__.load({
       statsSpeedEmpty: 'No speed samples yet (needs step timing data)',
       statsSpeedHourTitle: '{date} · hourly',
       statsSpeedHourHint:
-        'The same day split by local hour; still output tokens ÷ model time, hours without samples stay empty',
+        'The same day split by local hour: each bar is that hour’s average rate, an hour without a bar had no samples (nothing measured), and a paler bar was computed from fewer steps',
+      statsSpeedSamples: 'samples',
+      statsSpeedSamplesHigh: '≥20 steps',
+      statsSpeedSamplesMid: '3–19',
+      statsSpeedSamplesLowLabel: '1–2 (indicative)',
+      statsSpeedSamplesLow: 'only {steps} steps, indicative',
       statsSpeedHourEmpty: 'No hourly samples to drill into for this day',
       statsSpeedHourBarTitle: '{hour} · {tps} tok/s ({tokens} output ÷ {seconds}s)',
       statsSpeedHourAria: 'Hourly output speed for {date}',
@@ -3555,6 +3566,16 @@ window.__ModuleLoader__.load({
 .dsh-tokenlens-link-button:hover,.dsh-tokenlens-link-button:focus-visible{color:var(--dsw-alias-label-primary,currentColor)}
 .dsh-tokenlens-speed-axis{position:relative;height:13px;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:1.2;font-variant-numeric:tabular-nums;min-width:0}
 .dsh-tokenlens-speed-axis>span{position:absolute;top:0;transform:translateX(-50%);white-space:nowrap}
+/* v1.7.11: hourly TPS is a bar chart; the fill encodes how many steps it holds. */
+.dsh-tokenlens-speed-bar{fill:#2e9e5b}
+.dsh-tokenlens-speed-bar[data-sample-tier=mid]{fill:rgba(46,158,91,.5)}
+.dsh-tokenlens-speed-bar[data-sample-tier=low]{fill:rgba(46,158,91,.14);stroke:#2e9e5b;stroke-width:1;stroke-dasharray:2 2;vector-effect:non-scaling-stroke}
+.dsh-tokenlens-speed-legend{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;justify-content:flex-end;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:1.4;margin-top:-2px}
+.dsh-tokenlens-speed-legend-title{opacity:.85}
+.dsh-tokenlens-speed-legend-item{display:inline-flex;align-items:center;gap:3px;white-space:nowrap}
+.dsh-tokenlens-speed-legend-swatch{display:inline-block;width:8px;height:8px;border-radius:2px;background:#2e9e5b}
+.dsh-tokenlens-speed-legend-swatch[data-sample-tier=mid]{background:rgba(46,158,91,.5)}
+.dsh-tokenlens-speed-legend-swatch[data-sample-tier=low]{background:rgba(46,158,91,.14);border:1px dashed #2e9e5b;box-sizing:border-box}
 .dsh-tokenlens-speed-axis>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media (max-width:680px){.dsh-tokenlens-chart-layout-row>*{flex-basis:100%!important}}
 .dsh-tokenlens-details-charts{min-width:0}
@@ -6308,13 +6329,12 @@ window.__ModuleLoader__.load({
         const stepX = count > 1 ? (width - pad * 2) / (count - 1) : 0
         const xOf = (index) => (count > 1 ? pad + stepX * index : width / 2)
         const yOf = (entry) => height - pad - ((entry.tps ?? 0) / peak) * (height - pad * 2)
-        // Measured runs become solid segments; a run of nulls is a GAP, which is
-        // bridged with a dashed connector (v1.7.10) — the line stays readable and
-        // the dash says "nothing measured here" instead of "the value is zero".
+        // Measured runs become solid segments. The daily series is contiguous by
+        // construction (the Host only emits days with samples), so there is no
+        // gap to bridge — and the hourly view is a bar chart (v1.7.11), where an
+        // unmeasured hour simply has no column.
         let run = []
         const runs = []
-        const gaps = []
-        let previousMeasured = null
         pointsSeries.forEach((entry, index) => {
           if (entry === null || entry === undefined) {
             if (run.length > 0) {
@@ -6323,12 +6343,7 @@ window.__ModuleLoader__.load({
             }
             return
           }
-          const point = { x: xOf(index), y: yOf(entry), index }
-          if (previousMeasured !== null && previousMeasured.index !== index - 1) {
-            gaps.push([previousMeasured, point])
-          }
-          run.push(point)
-          previousMeasured = point
+          run.push({ x: xOf(index), y: yOf(entry), index })
         })
         if (run.length > 0) runs.push(run)
         const columnWidth = count > 1 ? stepX : width - pad * 2
@@ -6394,24 +6409,7 @@ window.__ModuleLoader__.load({
             }),
           ].filter(Boolean)
         })
-        // v1.7.10: a GAP is bridged with a dashed connector. Solid = measured,
-        // dashed = nothing measured in between, which is exactly what a broken
-        // line fails to say.
-        const gapNodes = gaps.map(([from, to], index) =>
-          h('polyline', {
-            key: `gap-${index}`,
-            className: 'dsh-tokenlens-speed-gap',
-            points: `${from.x.toFixed(1)},${from.y.toFixed(1)} ${to.x.toFixed(1)},${to.y.toFixed(1)}`,
-            fill: 'none',
-            stroke: '#2e9e5b',
-            'stroke-width': '1.2',
-            'stroke-dasharray': '3 3',
-            'stroke-opacity': '.55',
-            'vector-effect': 'non-scaling-stroke',
-            'aria-hidden': 'true',
-          }),
-        )
-        // v1.7.10: peak / trough guide lines, so the curve reads against the axis.
+        // v1.7.10: peak guide line, so the curve reads against the axis.
         const guideOf = (value, key, y) =>
           h('line', {
             key,
@@ -6430,11 +6428,47 @@ window.__ModuleLoader__.load({
           })
         const peakY = yOf({ tps: peak })
         const troughY = yOf({ tps: trough })
-        const guides = [
-          guideOf(peak, 'guide-peak', peakY),
-          // Skip the trough line when it sits on top of the peak (a flat series).
-          Math.abs(troughY - peakY) < 3 ? null : guideOf(trough, 'guide-trough', troughY),
-        ].filter(Boolean)
+        // v1.7.11: the hourly view is a BAR chart.
+        //
+        // A rate sampled per hour is a distribution, not a trend: the question is
+        // "when was it slow", and a column answers that better than a line. More
+        // importantly a bar chart states absence honestly — an hour with no
+        // sample simply has no column, so there is nothing to bridge and no
+        // implication that the value drifted smoothly across the hole.
+        //
+        // The column's fill encodes how many steps it was built from: a rate from
+        // one or two steps is noise (a 0.005s decode window can read 2000+ tok/s),
+        // so it must not look as authoritative as one built from a hundred.
+        const hourBarNodes = dailyMode
+          ? []
+          : pointsSeries
+              .map((entry, index) => {
+                if (entry === null || entry === undefined) return null
+                const steps = entry.steps ?? 0
+                const tier = steps >= 20 ? 'high' : steps >= 3 ? 'mid' : 'low'
+                const top = yOf(entry)
+                const zeroY = height - pad
+                return h('rect', {
+                  key: `bar-${index}`,
+                  className: 'dsh-tokenlens-speed-bar',
+                  x: (xOf(index) - stepX * 0.31).toFixed(2),
+                  y: top.toFixed(2),
+                  width: Math.max(1, stepX * 0.62).toFixed(2),
+                  height: Math.max(0.8, zeroY - top).toFixed(2),
+                  'data-sample-tier': tier,
+                  'data-speed-bar': String(index),
+                  'aria-hidden': 'true',
+                })
+              })
+              .filter(Boolean)
+        const guides = dailyMode
+          ? [
+              guideOf(peak, 'guide-peak', peakY),
+              // Skip the trough line when it sits on top of the peak (a flat series).
+              Math.abs(troughY - peakY) < 3 ? null : guideOf(trough, 'guide-trough', troughY),
+            ].filter(Boolean)
+          : // Bars sit on the zero baseline already; only the peak needs a ruler.
+            [guideOf(peak, 'guide-peak', peakY)]
         const svg = h(
           'svg',
           {
@@ -6447,8 +6481,7 @@ window.__ModuleLoader__.load({
             'aria-label': dailyMode ? t('statsSpeedTitle') : t('statsSpeedHourAria', { date: drilled.day }),
           },
           guides,
-          lineNodes.flat(),
-          gapNodes,
+          dailyMode ? lineNodes.flat() : hourBarNodes,
           columns.filter(Boolean),
         )
         const hoverIndex =
@@ -6479,7 +6512,8 @@ window.__ModuleLoader__.load({
           'div',
           { key: 'y', className: 'dsh-tokenlens-speed-yaxis', 'aria-hidden': 'true' },
           axisTick(peak, peakY, 'tick-peak'),
-          Math.abs(troughY - peakY) < 3 ? null : axisTick(trough, troughY, 'tick-trough'),
+          // The trough ruler only exists on the curve; bars are read against zero.
+          dailyMode && Math.abs(troughY - peakY) >= 3 ? axisTick(trough, troughY, 'tick-trough') : null,
           axisTick(0, height - pad, 'tick-zero'),
         )
         const crosshair =
@@ -6493,9 +6527,9 @@ window.__ModuleLoader__.load({
                 style: { left: `${(xOf(hoverIndex) / width) * 100}%` },
               })
         const marker =
-          hovered === null || hovered === undefined
-            ? null
-            : h('div', {
+          // v1.7.11: a bar needs no marker dot — its own right edge is the value.
+          dailyMode && hovered !== null && hovered !== undefined
+            ? h('div', {
                 key: 'dot',
                 className: 'dsh-tokenlens-speed-dot',
                 'aria-hidden': 'true',
@@ -6504,7 +6538,16 @@ window.__ModuleLoader__.load({
                   top: `${(yOf(hovered) / height) * 100}%`,
                 },
               })
+            : null
         const readoutLabel = dailyMode ? hovered?.day : `${String(hoverIndex).padStart(2, '0')}:00`
+        const hoveredTier =
+          hovered === null || hovered === undefined
+            ? null
+            : (hovered.steps ?? 0) >= 20
+              ? 'high'
+              : (hovered.steps ?? 0) >= 3
+                ? 'mid'
+                : 'low'
         const readout =
           hovered === null || hovered === undefined
             ? null
@@ -6533,6 +6576,10 @@ window.__ModuleLoader__.load({
                 // v1.7.9: the first-token wait, when this bucket has samples.
                 hovered.steps > 0 && hovered.ttftSeconds > 0
                   ? ` · ${t('statsSpeedTtft', { seconds: (hovered.ttftSeconds / hovered.steps).toFixed(1) })}`
+                  : null,
+                // v1.7.11: say how thin the sample is, in the readout itself.
+                !dailyMode && hoveredTier === 'low'
+                  ? ` · ${t('statsSpeedSamplesLow', { steps: hovered.steps })}`
                   : null,
               )
         // v1.7.10: labels are placed under their OWN point (not just first/last),
@@ -6596,6 +6643,27 @@ window.__ModuleLoader__.load({
           )
         : plotOf()
 
+      // v1.7.11: the bar fill encodes sample size, so it needs a key.
+      const legend = dailyMode
+        ? null
+        : h(
+            'div',
+            { key: 'legend', className: 'dsh-tokenlens-speed-legend', 'data-speed-legend': 'true' },
+            h('span', { key: 'label', className: 'dsh-tokenlens-speed-legend-title' }, t('statsSpeedSamples')),
+            ...[
+              ['high', t('statsSpeedSamplesHigh')],
+              ['mid', t('statsSpeedSamplesMid')],
+              ['low', t('statsSpeedSamplesLowLabel')],
+            ].map(([tier, text]) =>
+              h(
+                'span',
+                { key: tier, className: 'dsh-tokenlens-speed-legend-item' },
+                h('i', { className: 'dsh-tokenlens-speed-legend-swatch', 'data-sample-tier': tier }),
+                text,
+              ),
+            ),
+          )
+
       return h(
         'div',
         { key: 'speed', className: 'dsh-tokenlens-section', 'data-speed-section': 'true' },
@@ -6606,6 +6674,7 @@ window.__ModuleLoader__.load({
           dailyMode ? t('statsSpeedHint') : t('statsSpeedHourHint'),
         ),
         body,
+        legend,
       )
     }
     function buildStatsDetails(state, ctx, t) {

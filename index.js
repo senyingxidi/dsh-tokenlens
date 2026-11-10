@@ -84,7 +84,7 @@ export const inject = []
 export const PLUGIN_NAME = 'dsh-tokenlens'
 
 /** Plugin version; mirrors package.json (kept here so diagnostics need no fs read). */
-export const PLUGIN_VERSION = '1.7.10'
+export const PLUGIN_VERSION = '1.7.11'
 
 /**
  * Providers whose monthly allowance depends on the SELECTED model (v1.7.6).
