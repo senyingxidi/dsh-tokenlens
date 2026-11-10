@@ -4385,6 +4385,8 @@ test('the output-speed (TPS) trend renders as a line under the details (v1.7.1)'
     const text = textOf(section)
     assert.match(text, /输出速度（TPS）/, 'it is labelled')
     assert.match(text, /均值 77\.8 tok\/s/, 'the provider-scoped overall rate is stated')
+    // v1.7.8: a hidden drill-down is a dead feature — the hint must say it exists.
+    assert.match(text, /点击曲线上的某一天/, 'the daily hint advertises the hourly drill-down')
 
     // v1.7.1: a curve, not bars — one polyline plus a filled area.
     const line = findElement(section, (element) => element.props?.className === 'dsh-tokenlens-speed-line')

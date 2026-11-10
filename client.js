@@ -229,7 +229,8 @@ window.__ModuleLoader__.load({
       statsDshTotalLabel: 'DSH 合计',
       statsLast30Days: '最近30天',
       statsSpeedTitle: '输出速度（TPS）',
-      statsSpeedHint: '输出 Token ÷ 模型自身耗时（step 开始到消息返回）；不含工具调用等待，但输出含思考 Token',
+      statsSpeedHint:
+        '输出 Token ÷ 模型自身耗时（step 开始到消息返回）；不含工具调用等待，但输出含思考 Token。点击曲线上的某一天可查看该日的小时级速度',
       statsSpeedTotal: '均值 {tps} tok/s',
       statsSpeedPeak: '峰值 {tps} tok/s',
       statsSpeedEmpty: '暂无可计算的速度样本（需要 step 计时数据）',
@@ -512,7 +513,7 @@ window.__ModuleLoader__.load({
       statsLast30Days: 'Last 30 days',
       statsSpeedTitle: 'Output speed (TPS)',
       statsSpeedHint:
-        'Output tokens ÷ the model’s own request time (step start to message); tool waits excluded, reasoning tokens included',
+        'Output tokens ÷ the model’s own request time (step start to message); tool waits excluded, reasoning tokens included. Click a day on the curve for that day’s hourly speed',
       statsSpeedTotal: 'avg {tps} tok/s',
       statsSpeedPeak: 'peak {tps} tok/s',
       statsSpeedEmpty: 'No speed samples yet (needs step timing data)',
