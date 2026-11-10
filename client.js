@@ -233,6 +233,12 @@ window.__ModuleLoader__.load({
       statsSpeedTotal: '均值 {tps} tok/s',
       statsSpeedPeak: '峰值 {tps} tok/s',
       statsSpeedEmpty: '暂无可计算的速度样本（需要 step 计时数据）',
+      statsSpeedHourTitle: '{date} · 小时级',
+      statsSpeedHourHint: '同一天按本地小时切分；仍是输出 Token ÷ 模型自身耗时，无样本的小时留空',
+      statsSpeedHourEmpty: '该日没有可下钻的小时级样本',
+      statsSpeedHourBarTitle: '{hour} · {tps} tok/s（{tokens} 输出 ÷ {seconds}s）',
+      statsSpeedHourAria: '{date} 的小时级输出速度',
+      statsSpeedBack: '返回日视图',
       statsSpeedBarTitle: '{date} · {tps} tok/s（{tokens} 输出 ÷ {seconds}s）',
       statsSpeedDetail: '{tokens} 输出 ÷ {seconds}s',
       statsLast7Days: '最近7天',
@@ -510,6 +516,13 @@ window.__ModuleLoader__.load({
       statsSpeedTotal: 'avg {tps} tok/s',
       statsSpeedPeak: 'peak {tps} tok/s',
       statsSpeedEmpty: 'No speed samples yet (needs step timing data)',
+      statsSpeedHourTitle: '{date} · hourly',
+      statsSpeedHourHint:
+        'The same day split by local hour; still output tokens ÷ model time, hours without samples stay empty',
+      statsSpeedHourEmpty: 'No hourly samples to drill into for this day',
+      statsSpeedHourBarTitle: '{hour} · {tps} tok/s ({tokens} output ÷ {seconds}s)',
+      statsSpeedHourAria: 'Hourly output speed for {date}',
+      statsSpeedBack: 'Back to daily',
       statsSpeedBarTitle: '{date} · {tps} tok/s ({tokens} output ÷ {seconds}s)',
       statsSpeedDetail: '{tokens} output ÷ {seconds}s',
       statsLast7Days: 'Last 7 days',
@@ -1611,13 +1624,31 @@ window.__ModuleLoader__.load({
       const byDay = Array.isArray(raw.byDay)
         ? raw.byDay
             .filter((entry) => entry !== null && typeof entry === 'object' && typeof entry.day === 'string')
-            .map((entry) => ({
-              day: entry.day,
-              outputTokens: numberOrNull(entry.outputTokens) ?? 0,
-              seconds: numberOrNull(entry.seconds) ?? 0,
-              tps: numberOrNull(entry.tps),
-              steps: numberOrNull(entry.steps) ?? 0,
-            }))
+            .map((entry) => {
+              // v1.7.7: the day's 24 local-hour slots (null where there is no
+              // sample), used by the click-to-drill-down hourly view.
+              const hours = Array.isArray(entry.hours)
+                ? entry.hours.map((cell) => {
+                    if (cell === null || typeof cell !== 'object') return null
+                    const tps = numberOrNull(cell.tps)
+                    if (tps === null || tps < 0) return null
+                    return {
+                      outputTokens: numberOrNull(cell.outputTokens) ?? 0,
+                      seconds: numberOrNull(cell.seconds) ?? 0,
+                      tps,
+                      steps: numberOrNull(cell.steps) ?? 0,
+                    }
+                  })
+                : null
+              return {
+                day: entry.day,
+                outputTokens: numberOrNull(entry.outputTokens) ?? 0,
+                seconds: numberOrNull(entry.seconds) ?? 0,
+                tps: numberOrNull(entry.tps),
+                steps: numberOrNull(entry.steps) ?? 0,
+                hours: hours === null ? null : hours.slice(0, 24),
+              }
+            })
             .filter((entry) => entry.tps !== null && entry.tps >= 0)
         : []
       const totalRaw = raw.total !== null && typeof raw.total === 'object' ? raw.total : {}
@@ -2107,6 +2138,9 @@ window.__ModuleLoader__.load({
         chartHover: null,
         // v1.7.2: the hovered point of the output-speed (TPS) curve.
         speedHover: null,
+        // v1.7.7: the day whose 24 local hours the TPS card charts, or null
+        // (daily trend). Clicking a point on the curve toggles it.
+        speedDay: null,
         // v1.2.0 chart drill-down: the clicked day whose 0..23 hour histogram
         // is charted instead of the daily trend, or null (daily trend).
         chartDay: null,
@@ -2219,6 +2253,9 @@ window.__ModuleLoader__.load({
         // v1.7.6: the TPS hover index is view state like the chart's, so it must
         // not survive a provider switch (the series behind it changed).
         speedHover: null,
+        // v1.7.7: an hourly TPS drill-down belongs to one provider's series, so a
+        // provider switch returns to the daily trend.
+        speedDay: null,
       }
     }
 
@@ -3503,6 +3540,10 @@ window.__ModuleLoader__.load({
 .dsh-tokenlens-speed-yaxis{display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:1;font-variant-numeric:tabular-nums;flex:0 0 auto;padding:1px 0}
 .dsh-tokenlens-speed-plot{position:relative;flex:1 1 auto;min-width:0}
 .dsh-tokenlens-speed-dot{position:absolute;width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;background:#2e9e5b;box-shadow:0 0 0 2px var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.35));pointer-events:none}
+/* v1.7.7: the daily curve is clickable (drills into that day's hours). */
+.dsh-tokenlens-speed-svg[data-speed-mode=day] rect[data-speed-day]{cursor:pointer}
+.dsh-tokenlens-link-button{border:0;background:none;padding:0 0 0 6px;color:var(--dsw-alias-label-secondary,currentColor);font:inherit;font-size:11px;line-height:inherit;text-decoration:underline;cursor:pointer}
+.dsh-tokenlens-link-button:hover,.dsh-tokenlens-link-button:focus-visible{color:var(--dsw-alias-label-primary,currentColor)}
 .dsh-tokenlens-speed-axis{display:flex;justify-content:space-between;gap:6px;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:1.2;font-variant-numeric:tabular-nums;min-width:0}
 .dsh-tokenlens-speed-axis>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media (max-width:680px){.dsh-tokenlens-chart-layout-row>*{flex-basis:100%!important}}
@@ -4727,6 +4768,24 @@ window.__ModuleLoader__.load({
     function setSpeedHover(index) {
       const next = Number.isInteger(index) && index >= 0 ? index : null
       if (store.get().speedHover !== next) store.set({ speedHover: next })
+    }
+
+    /**
+     * Drill the TPS card into one day's 24 local hours (v1.7.7), or back out.
+     *
+     * Toggling mirrors the token chart's `activateChartDay`: clicking the already
+     * active day returns to the daily trend, so no separate "back" button is
+     * needed — but one is still offered in the header for discoverability.
+     */
+    function activateSpeedDay(day) {
+      if (typeof day !== 'string' || day === '') return
+      const next = store.get().speedDay === day ? null : day
+      store.set({ speedDay: next, speedHover: null })
+    }
+
+    /** Leave the hourly TPS drill-down and chart the daily trend again (v1.7.7). */
+    function clearSpeedDay() {
+      if (store.get().speedDay !== null) store.set({ speedDay: null, speedHover: null })
     }
 
     /** The active today bucket of the current stats scope (v0.27.2). */
@@ -6136,17 +6195,33 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * The output-speed (TPS) trend card (v1.7.0), shown under 明细.
+     * The output-speed (TPS) trend card (v1.7.0, reworked in v1.7.7).
+     *
+     * Always the CURRENT provider's series (v1.7.7): the user reads this card as
+     * "how fast is the model I am using right now", so it deliberately ignores
+     * the 当前供应商 / 全部 Harness switch above it.
      *
      * `tps` is output tokens over the model's OWN request time (`step/start` to
-     * `assistant/message`), so the step's tool calls do not dilute it — but
+     * `assistant/message`), so a step's tool calls do not dilute it — but
      * reasoning tokens are included in "output", which the hint says.
+     *
+     * Clicking a point drills into that day's 24 local hours (v1.7.7), the same
+     * interaction the token chart uses for its daily bars.
      */
     function buildSpeedSection(state, ctx, t) {
-      const stats = ctx.stats
-      const scoped = ctx.providerScoped ? ctx.currentRow?.speed ?? null : stats?.speed ?? null
-      const series = scoped === null || scoped === undefined ? null : scoped
+      // v1.7.7: always provider-scoped, whatever the scope tabs say.
+      const series = ctx.currentRow?.speed ?? null
       const byDay = series === null ? [] : series.byDay
+      const drilledDay = typeof state.speedDay === 'string' ? state.speedDay : null
+      const drilled = drilledDay === null ? null : byDay.find((entry) => entry.day === drilledDay) ?? null
+      // v1.7.7: being drilled into a day is a MODE, independent of whether that
+      // day actually carries hourly samples — otherwise a day without them would
+      // silently fall back to the daily chart instead of saying so.
+      const hourlyMode = drilledDay !== null && drilled !== null
+      const hourly = hourlyMode && Array.isArray(drilled.hours) ? drilled.hours : null
+      const pointsSeries = hourlyMode ? hourly ?? [] : byDay
+      const dailyMode = !hourlyMode
+
       const head = h(
         'div',
         { key: 'head', className: 'dsh-tokenlens-section-head' },
@@ -6156,205 +6231,266 @@ window.__ModuleLoader__.load({
           Icon('chart', 14),
           t('statsSpeedTitle'),
         ),
-        series !== null && series.total.tps !== null
-          ? h(
-              'span',
-              { className: 'dsh-tokenlens-hint', 'data-speed-total': String(series.total.tps) },
-              t('statsSpeedTotal', { tps: series.total.tps.toFixed(1) }),
-            )
-          : null,
-      )
-      const body =
-        byDay.length === 0
-          ? h(
-              'div',
-              { key: 'empty', className: 'dsh-tokenlens-chart-empty', 'data-speed-empty': 'true' },
-              h('span', { key: 'hint', className: 'dsh-tokenlens-hint' }, t('statsSpeedEmpty')),
-            )
-          : (() => {
-              // v1.7.1: a CURVE, not bars — the trend is a rate, and a line reads
-              // it far better than per-day columns. The SVG scales to the card
-              // width; `preserveAspectRatio="none"` lets it fill without keeping
-              // the viewBox ratio, and the per-day hover targets are transparent
-              // columns so nothing is distorted.
-              const width = 320
-              const height = 90
-              const pad = 4
-              const max = Math.max(...byDay.map((entry) => entry.tps ?? 0), 1)
-              const stepX = byDay.length > 1 ? (width - pad * 2) / (byDay.length - 1) : 0
-              const points = byDay.map((entry, index) => {
-                const x = byDay.length > 1 ? pad + stepX * index : width / 2
-                const y = height - pad - ((entry.tps ?? 0) / max) * (height - pad * 2)
-                return { x, y }
-              })
-              const line = points.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' ')
-              const area = `${pad.toFixed(1)},${(height - pad).toFixed(1)} ${line} ${(width - pad).toFixed(1)},${(height - pad).toFixed(1)}`
-              const columnWidth = byDay.length > 1 ? stepX : width - pad * 2
-              const columns = byDay.map((entry, index) =>
-                h(
-                  'rect',
-                  {
-                    key: `hit-${entry.day}-${index}`,
-                    // v1.7.6: clamp the hit column into the viewBox — a single-day
-                    // series used to start at a negative x and lose half its area.
-                    x: Math.max(0, Math.min(width - 1, points[index].x - columnWidth / 2)).toFixed(1),
-                    y: 0,
-                    width: Math.max(1, Math.min(columnWidth, width)).toFixed(1),
-                    height: String(height),
-                    fill: 'transparent',
-                    'data-speed-day': entry.day,
-                    'data-speed-tps': String(entry.tps ?? 0),
-                  },
-                  h(
-                    'title',
-                    { key: 'tip' },
-                    t('statsSpeedBarTitle', {
-                      date: entry.day,
-                      tps: (entry.tps ?? 0).toFixed(1),
-                      tokens: formatTokensPrecise(entry.outputTokens),
-                      seconds: entry.seconds.toFixed(1),
-                    }),
-                  ),
-                ),
+        // While drilled in, the header says which day and offers a way back.
+        hourly === null
+          ? series !== null && series.total.tps !== null
+            ? h(
+                'span',
+                { className: 'dsh-tokenlens-hint', 'data-speed-total': String(series.total.tps) },
+                t('statsSpeedTotal', { tps: series.total.tps.toFixed(1) }),
               )
-              const svg = h(
-                'svg',
+            : null
+          : h(
+              'span',
+              { key: 'drill', className: 'dsh-tokenlens-hint', 'data-speed-drill': drilled.day },
+              t('statsSpeedHourTitle', { date: drilled.day }),
+              h(
+                'button',
                 {
-                  key: 'svg',
-                  className: 'dsh-tokenlens-speed-svg',
-                  'data-speed-plot': 'true',
-                  viewBox: `0 0 ${width} ${height}`,
-                  preserveAspectRatio: 'none',
-                  role: 'img',
-                  'aria-label': t('statsSpeedTitle'),
+                  key: 'back',
+                  type: 'button',
+                  className: 'dsh-tokenlens-link-button',
+                  'data-speed-back': 'true',
+                  onClick: () => clearSpeedDay(),
                 },
-                h('polygon', {
-                  key: 'area',
+                t('statsSpeedBack'),
+              ),
+            ),
+      )
+
+      const plotOf = () => {
+        if (pointsSeries.length === 0) {
+          return h(
+            'div',
+            { key: 'empty', className: 'dsh-tokenlens-chart-empty', 'data-speed-empty': 'true' },
+            h('span', { key: 'hint', className: 'dsh-tokenlens-hint' }, t('statsSpeedEmpty')),
+          )
+        }
+        // The SVG scales to the card width; `preserveAspectRatio="none"` lets it
+        // fill without keeping the viewBox ratio, and the hover targets are
+        // transparent columns so nothing is distorted.
+        const width = 320
+        const height = 90
+        const pad = 4
+        const real = pointsSeries.filter((entry) => entry !== null)
+        const max = Math.max(...real.map((entry) => entry.tps ?? 0), 1)
+        const count = pointsSeries.length
+        const stepX = count > 1 ? (width - pad * 2) / (count - 1) : 0
+        // A null slot (an hour with no sample) breaks the line instead of being
+        // drawn as a dip to zero, which would be a lie.
+        let segment = []
+        const segments = []
+        pointsSeries.forEach((entry, index) => {
+          if (entry === null) {
+            if (segment.length > 0) segments.push(segment)
+            segment = []
+            return
+          }
+          const x = count > 1 ? pad + stepX * index : width / 2
+          const y = height - pad - ((entry.tps ?? 0) / max) * (height - pad * 2)
+          segment.push({ x, y })
+        })
+        if (segment.length > 0) segments.push(segment)
+        const xOf = (index) => (count > 1 ? pad + stepX * index : width / 2)
+        const yOf = (entry) => height - pad - ((entry.tps ?? 0) / max) * (height - pad * 2)
+        const columnWidth = count > 1 ? stepX : width - pad * 2
+        const columns = pointsSeries.map((entry, index) => {
+          if (entry === null) return null
+          const label = dailyMode
+            ? t('statsSpeedBarTitle', {
+                date: entry.day,
+                tps: (entry.tps ?? 0).toFixed(1),
+                tokens: formatTokensPrecise(entry.outputTokens),
+                seconds: entry.seconds.toFixed(1),
+              })
+            : t('statsSpeedHourBarTitle', {
+                hour: `${String(index).padStart(2, '0')}:00`,
+                tps: (entry.tps ?? 0).toFixed(1),
+                tokens: formatTokensPrecise(entry.outputTokens),
+                seconds: entry.seconds.toFixed(1),
+              })
+          return h(
+            'rect',
+            {
+              key: `hit-${index}`,
+              x: Math.max(0, Math.min(width - 1, xOf(index) - columnWidth / 2)).toFixed(1),
+              y: 0,
+              width: Math.max(1, Math.min(columnWidth, width)).toFixed(1),
+              height: String(height),
+              fill: 'transparent',
+              // In daily mode the column is also the drill-down target.
+              ...(dailyMode ? { 'data-speed-day': entry.day, onClick: () => activateSpeedDay(entry.day) } : {}),
+              ...(dailyMode ? {} : { 'data-speed-hour': String(index) }),
+              'data-speed-tps': String(entry.tps ?? 0),
+            },
+            h('title', { key: 'tip' }, label),
+          )
+        })
+        const lineNodes = segments.map((segment, index) => {
+          const line = segment.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' ')
+          const area =
+            segment.length > 1
+              ? `${segment[0].x.toFixed(1)},${(height - pad).toFixed(1)} ${line} ${segment[segment.length - 1].x.toFixed(1)},${(height - pad).toFixed(1)}`
+              : null
+          return [
+            area === null
+              ? null
+              : h('polygon', {
+                  key: `area-${index}`,
                   className: 'dsh-tokenlens-speed-area',
                   points: area,
                   fill: 'rgba(46,158,91,.18)',
                   'aria-hidden': 'true',
                 }),
-                h('polyline', {
-                  key: 'line',
-                  className: 'dsh-tokenlens-speed-line',
-                  points: line,
-                  fill: 'none',
-                  stroke: '#2e9e5b',
-                  'stroke-width': '1.6',
-                  'stroke-linecap': 'round',
-                  'stroke-linejoin': 'round',
-                  'vector-effect': 'non-scaling-stroke',
-                  'aria-hidden': 'true',
-                }),
-                columns,
-              )
-              const hoverIndex =
-                Number.isInteger(state.speedHover) && state.speedHover >= 0 && state.speedHover < byDay.length
-                  ? state.speedHover
-                  : null
-              const hovered = hoverIndex === null ? null : byDay[hoverIndex]
-              const handleMove = (event) => {
-                const index = chartIndexFromEvent(event, byDay.length)
-                if (index !== null) setSpeedHover(index)
-              }
-              const handleLeave = () => setSpeedHover(null)
-              // v1.7.2: a Y axis, like the native charts — the curve alone gives no
-              // sense of magnitude.
-              const ticks = [max, max / 2, 0]
-              const yAxis = h(
+            h('polyline', {
+              key: `line-${index}`,
+              className: 'dsh-tokenlens-speed-line',
+              points: line,
+              fill: 'none',
+              stroke: '#2e9e5b',
+              'stroke-width': '1.6',
+              'stroke-linecap': 'round',
+              'stroke-linejoin': 'round',
+              'vector-effect': 'non-scaling-stroke',
+              'aria-hidden': 'true',
+            }),
+          ].filter(Boolean)
+        })
+        const svg = h(
+          'svg',
+          {
+            key: 'svg',
+            className: 'dsh-tokenlens-speed-svg',
+            'data-speed-mode': dailyMode ? 'day' : 'hour',
+            viewBox: `0 0 ${width} ${height}`,
+            preserveAspectRatio: 'none',
+            role: 'img',
+            'aria-label': dailyMode ? t('statsSpeedTitle') : t('statsSpeedHourAria', { date: drilled.day }),
+          },
+          lineNodes.flat(),
+          columns.filter(Boolean),
+        )
+        const hoverIndex =
+          Number.isInteger(state.speedHover) && state.speedHover >= 0 && state.speedHover < count
+            ? state.speedHover
+            : null
+        const hovered = hoverIndex === null ? null : pointsSeries[hoverIndex]
+        const handleMove = (event) => {
+          const index = chartIndexFromEvent(event, count)
+          if (index !== null && pointsSeries[index] !== null) setSpeedHover(index)
+        }
+        const handleLeave = () => setSpeedHover(null)
+        const ticks = [max, max / 2, 0]
+        const yAxis = h(
+          'div',
+          { key: 'y', className: 'dsh-tokenlens-speed-yaxis', 'aria-hidden': 'true' },
+          ticks.map((value, index) =>
+            h('span', { key: `tick-${index}`, className: 'dsh-tokenlens-chart-tick' }, `${Math.round(value)}`),
+          ),
+        )
+        const crosshair =
+          hovered === null || hovered === undefined
+            ? null
+            : h('div', {
+                key: 'cross',
+                className: 'dsh-tokenlens-chart-crosshair',
+                'data-speed-crosshair': String(hoverIndex),
+                'aria-hidden': 'true',
+                style: { left: `${(xOf(hoverIndex) / width) * 100}%` },
+              })
+        const marker =
+          hovered === null || hovered === undefined
+            ? null
+            : h('div', {
+                key: 'dot',
+                className: 'dsh-tokenlens-speed-dot',
+                'aria-hidden': 'true',
+                style: {
+                  left: `${(xOf(hoverIndex) / width) * 100}%`,
+                  top: `${(yOf(hovered) / height) * 100}%`,
+                },
+              })
+        const readoutLabel = dailyMode ? hovered?.day : `${String(hoverIndex).padStart(2, '0')}:00`
+        const readout =
+          hovered === null || hovered === undefined
+            ? null
+            : h(
                 'div',
-                { key: 'y', className: 'dsh-tokenlens-speed-yaxis', 'aria-hidden': 'true' },
-                ticks.map((value, index) =>
-                  h('span', { key: `tick-${index}`, className: 'dsh-tokenlens-chart-tick' }, `${Math.round(value)}`),
-                ),
+                {
+                  key: 'readout',
+                  className: 'dsh-tokenlens-chart-readout',
+                  'data-speed-readout': 'true',
+                  role: 'status',
+                  style:
+                    hoverIndex === 0
+                      ? { left: '0%' }
+                      : hoverIndex === count - 1
+                        ? { right: '0%' }
+                        : {
+                            left: `${(xOf(hoverIndex) / width) * 100}%`,
+                            transform: 'translateX(-50%)',
+                          },
+                },
+                `${readoutLabel} · ${(hovered.tps ?? 0).toFixed(1)} tok/s`,
+                ` · ${t('statsSpeedDetail', {
+                  tokens: formatTokensPrecise(hovered.outputTokens),
+                  seconds: hovered.seconds.toFixed(1),
+                })}`,
               )
-              const crosshair =
-                hoverIndex === null
-                  ? null
-                  : h('div', {
-                      key: 'cross',
-                      className: 'dsh-tokenlens-chart-crosshair',
-                      'data-speed-crosshair': String(hoverIndex),
-                      'aria-hidden': 'true',
-                      style: { left: `${(points[hoverIndex].x / width) * 100}%` },
-                    })
-              const marker =
-                hoverIndex === null
-                  ? null
-                  : h('div', {
-                      key: 'dot',
-                      className: 'dsh-tokenlens-speed-dot',
-                      'aria-hidden': 'true',
-                      style: {
-                        left: `${(points[hoverIndex].x / width) * 100}%`,
-                        top: `${(points[hoverIndex].y / height) * 100}%`,
-                      },
-                    })
-              const readout =
-                hovered === null
-                  ? null
-                  : h(
-                      'div',
-                      {
-                        key: 'readout',
-                        className: 'dsh-tokenlens-chart-readout',
-                        'data-speed-readout': 'true',
-                        role: 'status',
-                        style:
-                          hoverIndex === 0
-                            ? { left: '0%' }
-                            : hoverIndex === byDay.length - 1
-                              ? { right: '0%' }
-                              : {
-                                  left: `${(points[hoverIndex].x / width) * 100}%`,
-                                  transform: 'translateX(-50%)',
-                                },
-                      },
-                      `${hovered.day} · ${(hovered.tps ?? 0).toFixed(1)} tok/s`,
-                      ` · ${t('statsSpeedDetail', {
-                        tokens: formatTokensPrecise(hovered.outputTokens),
-                        seconds: hovered.seconds.toFixed(1),
-                      })}`,
-                    )
-              const axis = h(
-                'div',
-                { key: 'axis', className: 'dsh-tokenlens-speed-axis', 'aria-hidden': 'true' },
-                h('span', { key: 'first' }, byDay[0].day),
-                byDay.length > 1 ? h('span', { key: 'last' }, byDay[byDay.length - 1].day) : null,
-              )
-              return h(
-                'div',
-                { key: 'plot', className: 'dsh-tokenlens-speed-body' },
-                yAxis,
-                h(
-                  'div',
-                  {
-                    key: 'plotarea',
-                    className: 'dsh-tokenlens-speed-plot',
-                    'data-speed-plot': 'true',
-                    onMouseMove: handleMove,
-                    onMouseLeave: handleLeave,
-                    onPointerMove: handleMove,
-                    onPointerLeave: handleLeave,
-                  },
-                  svg,
-                  crosshair,
-                  marker,
-                  readout,
-                  axis,
-                ),
-              )
-            })()
+        const axis = h(
+          'div',
+          { key: 'axis', className: 'dsh-tokenlens-speed-axis', 'aria-hidden': 'true' },
+          h('span', { key: 'first' }, dailyMode ? (pointsSeries[0]?.day ?? '') : '00:00'),
+          h('span', { key: 'last' }, dailyMode ? (pointsSeries[count - 1]?.day ?? '') : '23:00'),
+        )
+        return h(
+          'div',
+          { key: 'plot', className: 'dsh-tokenlens-speed-body' },
+          yAxis,
+          h(
+            'div',
+            {
+              key: 'plotarea',
+              className: `dsh-tokenlens-speed-plot${dailyMode ? '' : ' dsh-tokenlens-speed-plot-hourly'}`,
+              'data-speed-mode': dailyMode ? 'day' : 'hour',
+              onMouseMove: handleMove,
+              onMouseLeave: handleLeave,
+              onPointerMove: handleMove,
+              onPointerLeave: handleLeave,
+            },
+            svg,
+            crosshair,
+            marker,
+            readout,
+            axis,
+          ),
+        )
+      }
+
+      // A drilled-in day with no hourly samples explains itself instead of
+      // silently drawing nothing.
+      const allEmpty =
+        pointsSeries.length === 0 || pointsSeries.every((entry) => entry === null || entry === undefined)
+      const body = allEmpty
+        ? h(
+            'div',
+            { key: 'empty', className: 'dsh-tokenlens-chart-empty', 'data-speed-empty': 'true' },
+            h('span', { key: 'hint', className: 'dsh-tokenlens-hint' }, hourlyMode ? t('statsSpeedHourEmpty') : t('statsSpeedEmpty')),
+          )
+        : plotOf()
+
       return h(
         'div',
         { key: 'speed', className: 'dsh-tokenlens-section', 'data-speed-section': 'true' },
         head,
-        h('div', { key: 'hint', className: 'dsh-tokenlens-subtitle' }, t('statsSpeedHint')),
+        h(
+          'div',
+          { key: 'hint', className: 'dsh-tokenlens-subtitle' },
+          dailyMode ? t('statsSpeedHint') : t('statsSpeedHourHint'),
+        ),
         body,
       )
     }
-
     function buildStatsDetails(state, ctx, t) {
       const { stats, hasMonth } = ctx
       if (stats === null) return null

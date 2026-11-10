@@ -465,7 +465,8 @@ test('cache file is written and reused by a second service instance', async (t) 
   assert.equal(result.scan.reused, 1, 'an unchanged file comes from the persisted cache')
   const raw = JSON.parse(await readFile(join(dshHome, 'dsh-tokenlens', 'usage-cache.json'), 'utf8'))
   // v1.7.0 bumped the schema: the cache now carries per-day output-speed samples.
-  assert.equal(raw.version, 6)
+  // v1.7.7 bumped it again: it also carries per-hour speed samples.
+  assert.equal(raw.version, 7)
   assert.ok(Object.keys(raw.files).length === 1)
 })
 
@@ -872,6 +873,44 @@ test('output speed (TPS) pairs step/start with assistant/message (v1.7.0)', asyn
   assert.equal(provider.speed.total.tps, 133.3)
   // The unpaired 999-token message never appears as speed: 400, not 1399.
   assert.equal(provider.speed.total.outputTokens, 400, 'an unpaired message must not invent a duration')
+})
+
+test('output speed is also bucketed per local hour for the drill-down (v1.7.7)', async (t) => {
+  const dshHome = await mkdtemp(join(tmpdir(), 'tokenlens-tps-hour-'))
+  t.after(() => rm(dshHome, { recursive: true, force: true }))
+  const nine = todayAt(9, 30)
+  const fourteen = todayAt(14, 10)
+  await writeSession(dshHome, 'session-tps-hour', [
+    sessionHeader(),
+    headerEvent(1, 'commandcode', 'deepseek-v4.1-flash'),
+    // 09:30 — 600 output tokens over 5s (120 tok/s).
+    stepStartEvent(2, nine, 1, 1),
+    usageEvent(3, nine + 5000, { inputTokens: 0, outputTokens: 600, totalTokens: 600 }, { turn: 1, step: 1 }),
+    // 14:10 — 1400 output tokens over 20s (70 tok/s).
+    stepStartEvent(4, fourteen, 1, 2),
+    usageEvent(5, fourteen + 20000, { inputTokens: 0, outputTokens: 1400, totalTokens: 1400 }, { turn: 1, step: 2 }),
+  ])
+  const stats = createUsageStats({
+    dshHome,
+    config: { stats: { ttlMs: 0, harnesses: { dsh: true, zcode: false, opencode: false, workbuddy: false, qoder: false } } },
+    log: { info() {}, warn() {} },
+  })
+  const result = await stats.get()
+  const provider = result.providers.find((row) => row.providerId === 'commandcode')
+  const day = provider.speed.byDay[0]
+  assert.ok(Array.isArray(day.hours), 'the day carries 24 local-hour slots')
+  assert.equal(day.hours.length, 24)
+  assert.equal(day.hours[9].tps, 120, '09:xx keeps its own rate')
+  assert.equal(day.hours[9].outputTokens, 600)
+  assert.equal(day.hours[14].tps, 70, '14:xx keeps its own rate')
+  assert.equal(day.hours[14].seconds, 20)
+  // Hours without a sample are null rather than a fabricated zero, so the chart
+  // can break the line instead of drawing a dip.
+  assert.equal(day.hours[11], null, 'an hour with no sample is empty')
+  assert.equal(day.hours[0], null)
+  // The day itself still aggregates both hours.
+  assert.equal(day.outputTokens, 2000)
+  assert.equal(day.seconds, 25)
 })
 
 test('a speed series with no paired steps is empty, not a crash (v1.7.0)', async (t) => {

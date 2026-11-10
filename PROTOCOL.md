@@ -324,7 +324,8 @@ folder basename, used by the client to match a sidebar hover card; the full
 `cwd` is Host-only and never sent on the wire), the rolling 5-hour local window
 (`fiveHours`, DSH-only because external harnesses are day-granular), and the
 bounded `daily[]` series used by the chart view, the `speed` series behind the
-TPS trend (v1.7.0), and the subscription window (`effectiveDay` is the plan's
+TPS trend (v1.7.0, with 24 local-hour slots per day for the drill-down in
+v1.7.7), and the subscription window (`effectiveDay` is the plan's
 period start when the Host learned it, and `sinceEffective` is summed from the
 per-day buckets inside `[window start, today]` rather than borrowed from the
 30-day or all-time bucket — v1.7.2). Absolute local paths are
@@ -392,7 +393,12 @@ with `[path]`.
     "speed": {
       "byDay": [
         { "day": "2026-11-05", "outputTokens": 516951, "seconds": 8493.1,
-          "tps": 60.9, "steps": 859 }
+          "tps": 60.9, "steps": 859,
+          // v1.7.7: 24 local-hour slots for the click-to-drill-down view. A slot
+          // with no sample is null rather than a zero, so the curve breaks
+          // instead of dipping to zero. Only provider-scoped series carry it.
+          "hours": [ null, null, …, { "outputTokens": 600, "seconds": 5,
+                                      "tps": 120, "steps": 1 }, … ] }
       ],
       "total": { "outputTokens": 939643, "seconds": 14123.9, "tps": 66.5, "steps": 1424 }
     },

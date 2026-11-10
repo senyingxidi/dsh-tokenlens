@@ -336,10 +336,35 @@ function statsFixture(overrides = {}) {
     zcode: triple(0, 4336000000, 4336000000, { today: 0, month: 3000, all: 6000 }),
   })
   // v1.7.0: a provider-scoped TPS series, so the chart follows the scope switch.
+  // v1.7.7: 24 local-hour slots per day, driving the click-to-drill-down view.
+  const speedHoursOf = (samples) => {
+    const slots = Array.from({ length: 24 }, () => null)
+    for (const [hour, tps, tokens, seconds] of samples) {
+      slots[hour] = { outputTokens: tokens, seconds, tps, steps: 1 }
+    }
+    return slots
+  }
   opencodeGo.speed = {
     byDay: [
-      { day: '2026-10-24', outputTokens: 2000, seconds: 20, tps: 100, steps: 12 },
-      { day: '2026-10-25', outputTokens: 1500, seconds: 25, tps: 60, steps: 9 },
+      {
+        day: '2026-10-24',
+        outputTokens: 2000,
+        seconds: 20,
+        tps: 100,
+        steps: 12,
+        hours: speedHoursOf([
+          [9, 120, 600, 5],
+          [14, 80, 1400, 15],
+        ]),
+      },
+      {
+        day: '2026-10-25',
+        outputTokens: 1500,
+        seconds: 25,
+        tps: 60,
+        steps: 9,
+        hours: speedHoursOf([[11, 60, 1500, 25]]),
+      },
     ],
     total: { outputTokens: 3500, seconds: 45, tps: 77.8, steps: 21 },
   }
@@ -4236,6 +4261,86 @@ test('the TPS hover index never survives a view or provider change (v1.7.6)', ()
   assert.match(viewTab, /speedHover: null/, 'a view switch clears it')
 })
 
+test('the TPS card always charts the current provider, not the combined series (v1.7.7)', async () => {
+  // The card answers "how fast is the model I am using", so the 全部 Harness
+  // tab must not swap in the aggregate series (which would read 69.2 here).
+  const plugin = loadPlugin()
+  try {
+    let tree = await settleDataDialog(plugin, 'opencode-go')
+    let section = findElement(tree, (element) => element.props?.['data-speed-section'] === 'true')
+    assert.match(textOf(section), /均值 77\.8 tok\/s/, 'the provider row series is charted')
+
+    tree = switchToDataDialogAllScope(plugin, tree)
+    section = findElement(tree, (element) => element.props?.['data-speed-section'] === 'true')
+    assert.match(textOf(section), /均值 77\.8 tok\/s/, 'switching to 全部 Harness does not change it')
+    assert.doesNotMatch(textOf(section), /均值 69\.2 tok\/s/, 'the combined series is never used')
+  } finally {
+    plugin.dispose()
+  }
+})
+
+test('clicking a point on the TPS curve drills into that day\'s hours (v1.7.7)', async () => {
+  const plugin = loadPlugin()
+  try {
+    const tree = await settleDataDialog(plugin, 'opencode-go')
+    const day = findAll(tree, (element) => element.props?.['data-speed-day'] === '2026-10-24')[0]
+    assert.ok(day, 'the day has a clickable hit column')
+    assert.equal(typeof day.props.onClick, 'function', 'the column is a drill-down target')
+
+    day.props.onClick()
+    const drilled = dialogOf(plugin).component({ sessionId: 'session-1', t: plugin.t })
+    const svg = findElement(drilled, (element) => element.props?.className === 'dsh-tokenlens-speed-svg')
+    assert.equal(svg.props['data-speed-mode'], 'hour', 'the chart switches to hourly mode')
+    assert.match(textOf(drilled), /2026-10-24 · 小时级/, 'the header names the drilled day')
+    const hours = findAll(drilled, (element) => element.props?.['data-speed-hour'] !== undefined)
+    assert.deepEqual(
+      hours.map((element) => element.props['data-speed-hour']),
+      ['9', '14'],
+      'only the hours with samples are hoverable',
+    )
+    const tip = findElement(hours[0], (element) => element.type === 'title')
+    assert.match(textOf(tip), /09:00 · 120\.0 tok\/s/, 'the tooltip names the hour and its rate')
+
+    // The header offers a way back, and clicking the same day toggles out too.
+    const back = findElement(drilled, (element) => element.props?.['data-speed-back'] === 'true')
+    assert.ok(back, 'a back control exists')
+    back.props.onClick()
+    const backTree = dialogOf(plugin).component({ sessionId: 'session-1', t: plugin.t })
+    const backSvg = findElement(backTree, (element) => element.props?.className === 'dsh-tokenlens-speed-svg')
+    assert.equal(backSvg.props['data-speed-mode'], 'day', 'it returns to the daily trend')
+  } finally {
+    plugin.dispose()
+  }
+})
+
+test('a drilled day without hourly samples explains itself (v1.7.7)', async () => {
+  const noHours = statsFixture()
+  noHours.providers = noHours.providers.map((row) =>
+    row.providerId === 'opencode-go'
+      ? { ...row, speed: { byDay: row.speed.byDay.map((entry) => ({ ...entry, hours: null })), total: row.speed.total } }
+      : row,
+  )
+  const plugin = loadPlugin((payload) => {
+    if (payload.action === 'hello') return { ok: true }
+    if (payload.action === 'stats') return { ok: true, stats: noHours }
+    if (payload.action === 'providers') return providersFixture()
+    return { ok: true, snapshot: snapshotFixture(payload.providerId) }
+  })
+  try {
+    const tree = await settleDataDialog(plugin, 'opencode-go')
+    const day = findAll(tree, (element) => element.props?.['data-speed-day'] === '2026-10-24')[0]
+    day.props.onClick()
+    const drilled = dialogOf(plugin).component({ sessionId: 'session-1', t: plugin.t })
+    assert.ok(
+      findElement(drilled, (element) => element.props?.['data-speed-empty'] === 'true'),
+      'an empty state replaces the chart',
+    )
+    assert.match(textOf(drilled), /没有可下钻的小时级样本/, 'and says why')
+  } finally {
+    plugin.dispose()
+  }
+})
+
 test('the chip uses a native title and the speed card is full width (v1.7.1)', async () => {
   // Two layout-safety guarantees:
   //  - the chip must not mount a Tooltip bubble, which overflowed a narrow dock,
@@ -5657,6 +5762,17 @@ function switchToDataView(plugin, tree) {
 async function settleDataDialog(plugin, providerId = 'opencode-go') {
   const tree = await settleDialog(plugin, providerId)
   return switchToDataView(plugin, tree)
+}
+
+/** Switch the rendered dialog to 全部 Harness scope and re-render it. */
+function switchToDataDialogAllScope(plugin, tree) {
+  const allTab = findElement(
+    tree,
+    (element) => element.props?.className === 'dsh-tokenlens-scope-option' && element.props['data-scope'] === 'all',
+  )
+  assert.ok(allTab, 'the 全部 Harness scope tab is rendered')
+  if (allTab.props['data-active'] !== 'true') allTab.props.onClick()
+  return renderDialog(plugin)
 }
 
 /** Every chart bar of the daily chart (v0.24.0). */
