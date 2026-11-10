@@ -194,6 +194,7 @@ window.__ModuleLoader__.load({
       statusPrefix: '上游状态：{status}',
       planPrefix: '套餐：{plan}',
       accountPrefix: '账户：{name}',
+      modelPrefix: '模型：{model}',
       balanceLabel: '账户余额',
       balanceGranted: '赠送 {amount}',
       balanceToppedUp: '充值 {amount}',
@@ -486,6 +487,7 @@ window.__ModuleLoader__.load({
       statusPrefix: 'Upstream: {status}',
       planPrefix: 'Plan: {plan}',
       accountPrefix: 'Account: {name}',
+      modelPrefix: 'Model: {model}',
       balanceLabel: 'Account balance',
       balanceGranted: 'Granted {amount}',
       balanceToppedUp: 'Topped up {amount}',
@@ -3574,6 +3576,11 @@ window.__ModuleLoader__.load({
    many steps built the bar (a 1-step rate is noise, not a fact). */
 .dsh-tokenlens-chart-bar-wrap[data-sample-tier=mid] .dsh-tokenlens-chart-bar{opacity:.55}
 .dsh-tokenlens-chart-bar-wrap[data-sample-tier=low] .dsh-tokenlens-chart-bar{opacity:.3;outline:1px dashed rgba(46,158,91,.75);outline-offset:1px}
+/* v1.7.13: the TPS hour chart packs 24 slots into a shorter card; widen the bars by
+   collapsing the inter-bar gap and dropping the 24px cap, so the plot reads as a
+   histogram rather than 24 thin spikes. */
+.dsh-tokenlens-speed-hourly .dsh-tokenlens-chart-bars{gap:1px;padding:2px 0 0}
+.dsh-tokenlens-speed-hourly .dsh-tokenlens-chart-bar{max-width:none;border-radius:1px 1px 0 0}
 .dsh-tokenlens-speed-legend{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;justify-content:flex-end;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:1.4;margin-top:-2px}
 .dsh-tokenlens-speed-legend-title{opacity:.85}
 .dsh-tokenlens-speed-legend-item{display:inline-flex;align-items:center;gap:3px;white-space:nowrap}
@@ -3606,7 +3613,12 @@ window.__ModuleLoader__.load({
 .dsh-tokenlens-details-subhead{color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:1.4;padding-top:2px;border-top:1px dashed var(--dsw-alias-border-subtle,rgba(127,127,127,.24))}
 .dsh-tokenlens-details-block .dsh-tokenlens-harness-hint,.dsh-tokenlens-details-block .dsh-tokenlens-unmapped-hint{font-size:10px;line-height:1.45;overflow-wrap:anywhere}
 .dsh-tokenlens-details-block .dsh-tokenlens-harness-unavailable{font-size:10px;white-space:nowrap}
-.dsh-tokenlens-details-charts-grid{display:flex;flex-wrap:wrap;gap:10px 18px;min-width:0}
+.dsh-tokenlens-details-charts-grid{display:flex;flex-wrap:wrap;gap:10px 18px;min-width:0;align-items:flex-start}
+/* v1.7.13: the three donut charts start at the same y. The groups used to stretch
+   to the tallest one, so a longer legend (or a wrapping title) pushed that group's
+   ring down and the three rings stopped lining up. */
+.dsh-tokenlens-donut-group>.dsh-tokenlens-breakdown-head{min-height:18px;align-items:flex-start}
+.dsh-tokenlens-donut-group>.dsh-tokenlens-donut-wrap{align-items:flex-start}
 /* 明细 donut share charts + ranked legends (v0.27.0). */
 .dsh-tokenlens-details-charts-grid>.dsh-tokenlens-chart-group,.dsh-tokenlens-details-charts>.dsh-tokenlens-chart-group{flex:1 1 260px;min-width:0}
 .dsh-tokenlens-details-charts-grid>.dsh-tokenlens-chart-group+.dsh-tokenlens-chart-group,.dsh-tokenlens-details-charts>.dsh-tokenlens-chart-group+.dsh-tokenlens-chart-group{border-left:1px solid var(--dsw-alias-border-subtle,rgba(127,127,127,.24));padding-left:14px}
@@ -3622,9 +3634,11 @@ window.__ModuleLoader__.load({
 .dsh-tokenlens-donut-segment:hover{stroke-width:12}
 .dsh-tokenlens-donut-center{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;min-width:0}
 .dsh-tokenlens-donut-total{color:var(--dsw-alias-label-primary);font-size:11px;font-weight:600;line-height:1.2;font-variant-numeric:tabular-nums;max-width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center}
-.dsh-tokenlens-donut-legend{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:2px 6px;align-items:center;flex:1 1 150px;min-width:0;overflow:hidden}
+.dsh-tokenlens-donut-legend{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:2px 6px;align-items:start;flex:1 1 150px;min-width:0;overflow:hidden}
 .dsh-tokenlens-donut-legend-row{display:contents;font-size:11px;line-height:1.4}
-.dsh-tokenlens-donut-dot{flex:none;width:8px;height:8px;border-radius:50%}
+/* v1.7.13: the dot marks the FIRST line of the label. Centring used to drop it into
+   the middle of a wrapped two-line model name. */
+.dsh-tokenlens-donut-dot{flex:none;width:8px;height:8px;border-radius:50%;margin-top:4px}
 .dsh-tokenlens-donut-legend-label{color:var(--dsw-alias-label-secondary);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:normal;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .dsh-tokenlens-donut-legend-percent{color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
 .dsh-tokenlens-donut-legend-value{color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
@@ -4397,8 +4411,15 @@ window.__ModuleLoader__.load({
       )
     }
 
-    /** The provider/plan/account header line, or null when there is nothing to say. */
-    function buildProviderHeader(snapshot, t) {
+    /**
+     * The provider/plan/account/model header line, or null when nothing is known.
+     *
+     * v1.7.13: the model in use is part of this line. It matters for Command Code
+     * because the monthly allowance is per-model, but it is useful everywhere —
+     * "which model was this usage produced by" is the first question the card
+     * raises.
+     */
+    function buildProviderHeader(snapshot, t, modelId) {
       if (snapshot === null) return null
       const parts = []
       const plan = snapshot.plan
@@ -4413,6 +4434,16 @@ window.__ModuleLoader__.load({
             ? account.userName
             : account.name
       if (name !== '') parts.push(h('span', { key: 'account', className: 'dsh-tokenlens-account' }, t('accountPrefix', { name })))
+      const model = typeof modelId === 'string' ? modelId.trim() : ''
+      if (model !== '') {
+        parts.push(
+          h(
+            'span',
+            { key: 'model', className: 'dsh-tokenlens-model', 'data-current-model': model, title: model },
+            t('modelPrefix', { model }),
+          ),
+        )
+      }
       if (parts.length === 0) return null
       return h('div', { key: 'provider', className: 'dsh-tokenlens-provider' }, parts)
     }
@@ -4902,7 +4933,7 @@ window.__ModuleLoader__.load({
       // 3 bars the first label sat at 0% while its bar was centred at 16.7%, and
       // the last sat at 100% while its bar was at 83.3% — the dates drifted off
       // their columns (reported for a 3-day series).
-      const xLabels = chartXLabelIndices(points.length).map((index) => {
+      const xLabels = (Array.isArray(spec.labelIndices) ? spec.labelIndices : chartXLabelIndices(points.length)).map((index) => {
         const point = points[index]
         const label = spec.xLabel(point, index)
         const style = { left: `${((index + 0.5) / points.length) * 100}%`, transform: 'translateX(-50%)' }
@@ -5802,7 +5833,7 @@ window.__ModuleLoader__.load({
         )
       }
       if (snapshot !== null) {
-        const header = buildProviderHeader(snapshot, t)
+        const header = buildProviderHeader(snapshot, t, state.modelId)
         if (header !== null) section.push(header)
         if (snapshot.provider.kind === 'balance') {
           const card = buildBalanceCard(snapshot, t)
@@ -6349,6 +6380,9 @@ window.__ModuleLoader__.load({
             // land on its empty slot.
             skipEmptyHover: true,
             tickText: (value) => `${Math.round(value)}`,
+            // v1.7.13: an hour axis wants finer ticks than the 6-label default —
+            // every three hours, so a given hour is easy to locate.
+            labelIndices: [0, 3, 6, 9, 12, 15, 18, 21, 23].filter((hour) => hour < hourPoints.length),
             bar: (point, index, meta) => {
               const entry = point.entry
               const measuredHere = entry !== null && entry !== undefined
