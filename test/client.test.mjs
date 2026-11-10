@@ -4397,11 +4397,11 @@ test('the TPS curve labels intermediate days and bridges hourly gaps (v1.7.10)',
 
     // Drill into a day whose hours have a hole: 9, 10, 14.
     const gapped = statsFixture()
-    const slot = (tps, tokens, seconds) => ({ outputTokens: tokens, seconds, tps, steps: 1, ttftSeconds: 2 })
+    const slot = (tps, tokens, seconds, steps = 1) => ({ outputTokens: tokens, seconds, tps, steps, ttftSeconds: 2 })
     const hours = Array.from({ length: 24 }, () => null)
-    hours[9] = slot(80, 800, 10)
-    hours[10] = slot(90, 900, 10)
-    hours[14] = slot(100, 1000, 10)
+    hours[9] = slot(80, 800, 10, 30)
+    hours[10] = slot(90, 900, 10, 8)
+    hours[14] = slot(100, 1000, 10, 1)
     gapped.providers = gapped.providers.map((row) =>
       row.providerId === 'opencode-go'
         ? { ...row, speed: { byDay: [{ ...row.speed.byDay[0], hours }], total: row.speed.total } }
@@ -4418,11 +4418,44 @@ test('the TPS curve labels intermediate days and bridges hourly gaps (v1.7.10)',
       const dayColumn = findAll(gappedTree, (element) => element.props?.['data-speed-day'] !== undefined)[0]
       dayColumn.props.onClick()
       const drilled = dialogOf(plugin2).component({ sessionId: 'session-1', t: plugin2.t })
-      const gaps = findAll(drilled, (element) => element.props?.className === 'dsh-tokenlens-speed-gap')
-      assert.equal(gaps.length, 1, 'one dashed connector across the unmeasured hours')
-      assert.equal(gaps[0].props['stroke-dasharray'], '3 3', 'the connector is dashed, not solid')
-      const solids = findAll(drilled, (element) => element.props?.className === 'dsh-tokenlens-speed-line')
-      assert.equal(solids.length, 2, 'the measured runs stay solid')
+
+      // v1.7.11: hourly is a BAR chart — an unmeasured hour has no bar, which
+      // states the gap without bridging it with a line.
+      const bars = findAll(drilled, (element) => element.props?.['data-speed-bar'] !== undefined)
+      assert.deepEqual(
+        bars.map((element) => element.props['data-speed-bar']),
+        ['9', '10', '14'],
+        'one bar per measured hour, none for the empty ones',
+      )
+      assert.equal(
+        findAll(drilled, (element) => element.props?.className === 'dsh-tokenlens-speed-line').length,
+        0,
+        'no curve in hourly mode',
+      )
+      assert.equal(
+        findAll(drilled, (element) => element.props?.className === 'dsh-tokenlens-speed-gap').length,
+        0,
+        'no dashed connector is needed once gaps are simply absent',
+      )
+      // The fill encodes sample size, so a 1-step bar cannot look authoritative.
+      assert.deepEqual(
+        bars.map((element) => element.props['data-sample-tier']),
+        ['high', 'mid', 'low'],
+        '30 steps solid, 8 mid, 1 outline-only',
+      )
+      const legend = findElement(drilled, (element) => element.props?.['data-speed-legend'] === 'true')
+      assert.ok(legend, 'the bar fill needs a key')
+      assert.equal(
+        findAll(legend, (element) => element.props?.className === 'dsh-tokenlens-speed-legend-swatch').length,
+        3,
+        'three sample tiers are explained',
+      )
+      // Bars are read against zero, so only the peak ruler is drawn.
+      assert.equal(
+        findAll(drilled, (element) => element.props?.['data-guide'] !== undefined).length,
+        1,
+        'one guide line (the peak)',
+      )
       const hourLabels = findAll(drilled, (element) => element.props?.['data-speed-xlabel'] !== undefined)
       assert.deepEqual(
         hourLabels.map((element) => textOf(element)),
