@@ -4471,8 +4471,8 @@ test('the TPS curve labels intermediate days and bridges hourly gaps (v1.7.10)',
       const hourLabels = findAll(drilled, (element) => element.props?.['data-speed-xlabel'] !== undefined)
       assert.deepEqual(
         hourLabels.map((element) => textOf(element)),
-        ['00:00', '05:00', '10:00', '15:00', '20:00', '23:00'],
-        'the hourly axis uses the same label picker as the token chart',
+        ['00:00', '03:00', '06:00', '09:00', '12:00', '15:00', '18:00', '21:00', '23:00'],
+        'v1.7.13: every three hours, so any hour is easy to locate',
       )
     } finally {
       plugin2.dispose()
@@ -4480,6 +4480,60 @@ test('the TPS curve labels intermediate days and bridges hourly gaps (v1.7.10)',
   } finally {
     plugin.dispose()
   }
+})
+
+test('the capacity header names the model in use (v1.7.13)', async () => {
+  const plugin = loadPlugin()
+  try {
+    const tree = await settleDialog(plugin, 'commandcode')
+    const header = findElement(tree, (element) => element.props?.className === 'dsh-tokenlens-provider')
+    assert.ok(header, 'the plan/account header renders')
+    const model = findElement(header, (element) => element.props?.['data-current-model'] !== undefined)
+    assert.ok(model, 'the header carries the current model')
+    assert.equal(model.props['data-current-model'], 'm', 'the model reported by the projection')
+    assert.match(textOf(model), /模型：m/, 'and shows it')
+    assert.equal(String(model.props.title), 'm', 'the full id stays available on hover')
+    assert.match(textOf(header), /套餐：/, 'the plan is still there')
+  } finally {
+    plugin.dispose()
+  }
+})
+
+test('the 明细 donuts line up and their dots sit on the first label line (v1.7.13)', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  // Top alignment: the grid must not stretch groups to the tallest one.
+  assert.match(
+    source,
+    /\.dsh-tokenlens-details-charts-grid\{[^}]*align-items:flex-start/,
+    'the donut grid aligns its groups to the top',
+  )
+  assert.match(
+    source,
+    /\.dsh-tokenlens-donut-group>\.dsh-tokenlens-breakdown-head\{min-height:18px/,
+    'the group header has a fixed height so the rings start at the same y',
+  )
+  // Legend: the dot belongs to the first line of a wrapped label.
+  assert.match(
+    source,
+    /\.dsh-tokenlens-donut-legend\{[^}]*align-items:start/,
+    'legend cells align to the top',
+  )
+  assert.match(
+    source,
+    /\.dsh-tokenlens-donut-dot\{[^}]*margin-top:4px/,
+    'the dot is nudged onto the first text line',
+  )
+  // Hourly TPS bars: wider columns, tighter gaps.
+  assert.match(
+    source,
+    /\.dsh-tokenlens-speed-hourly \.dsh-tokenlens-chart-bars\{gap:1px/,
+    'the TPS hour histogram closes the inter-bar gap',
+  )
+  assert.match(
+    source,
+    /\.dsh-tokenlens-speed-hourly \.dsh-tokenlens-chart-bar\{max-width:none/,
+    'and drops the 24px bar cap so the columns fill their slots',
+  )
 })
 
 test('the chip uses a native title and the speed card is full width (v1.7.1)', async () => {
