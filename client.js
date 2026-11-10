@@ -243,6 +243,8 @@ window.__ModuleLoader__.load({
       statsSpeedSamplesMid: '3–19',
       statsSpeedSamplesLowLabel: '1–2（参考）',
       statsSpeedSamplesLow: '仅 {steps} 个 step，仅供参考',
+      statsSpeedHourNoSample: '{hour} 没有样本',
+      statsSpeedPeakHours: '峰值 {tps} tok/s（{hour}）',
       statsSpeedHourEmpty: '该日没有可下钻的小时级样本',
       statsSpeedHourBarTitle: '{hour} · {tps} tok/s（{tokens} 输出 ÷ {seconds}s）',
       statsSpeedHourAria: '{date} 的小时级输出速度',
@@ -533,6 +535,8 @@ window.__ModuleLoader__.load({
       statsSpeedSamplesMid: '3–19',
       statsSpeedSamplesLowLabel: '1–2 (indicative)',
       statsSpeedSamplesLow: 'only {steps} steps, indicative',
+      statsSpeedHourNoSample: '{hour} had no samples',
+      statsSpeedPeakHours: 'peak {tps} tok/s ({hour})',
       statsSpeedHourEmpty: 'No hourly samples to drill into for this day',
       statsSpeedHourBarTitle: '{hour} · {tps} tok/s ({tokens} output ÷ {seconds}s)',
       statsSpeedHourAria: 'Hourly output speed for {date}',
@@ -3566,10 +3570,10 @@ window.__ModuleLoader__.load({
 .dsh-tokenlens-link-button:hover,.dsh-tokenlens-link-button:focus-visible{color:var(--dsw-alias-label-primary,currentColor)}
 .dsh-tokenlens-speed-axis{position:relative;height:13px;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:1.2;font-variant-numeric:tabular-nums;min-width:0}
 .dsh-tokenlens-speed-axis>span{position:absolute;top:0;transform:translateX(-50%);white-space:nowrap}
-/* v1.7.11: hourly TPS is a bar chart; the fill encodes how many steps it holds. */
-.dsh-tokenlens-speed-bar{fill:#2e9e5b}
-.dsh-tokenlens-speed-bar[data-sample-tier=mid]{fill:rgba(46,158,91,.5)}
-.dsh-tokenlens-speed-bar[data-sample-tier=low]{fill:rgba(46,158,91,.14);stroke:#2e9e5b;stroke-width:1;stroke-dasharray:2 2;vector-effect:non-scaling-stroke}
+/* v1.7.12: hourly TPS reuses the token chart's bar markup; the fill encodes how
+   many steps built the bar (a 1-step rate is noise, not a fact). */
+.dsh-tokenlens-chart-bar-wrap[data-sample-tier=mid] .dsh-tokenlens-chart-bar{opacity:.55}
+.dsh-tokenlens-chart-bar-wrap[data-sample-tier=low] .dsh-tokenlens-chart-bar{opacity:.3;outline:1px dashed rgba(46,158,91,.75);outline-offset:1px}
 .dsh-tokenlens-speed-legend{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;justify-content:flex-end;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:1.4;margin-top:-2px}
 .dsh-tokenlens-speed-legend-title{opacity:.85}
 .dsh-tokenlens-speed-legend-item{display:inline-flex;align-items:center;gap:3px;white-space:nowrap}
@@ -4727,11 +4731,12 @@ window.__ModuleLoader__.load({
     }
 
     /** The 5 Y-axis ticks of the chart, max → 0, as `{ratio, value, text}`. */
-    function chartAxisTicks(max) {
+    function chartAxisTicks(max, tickText) {
       return [1, 0.75, 0.5, 0.25, 0].map((ratio) => ({
         ratio,
         value: max * ratio,
-        text: formatTokensPrecise(max * ratio),
+        // v1.7.12: an injection point for charts whose unit is not tokens (tok/s).
+        text: typeof tickText === 'function' ? tickText(max * ratio) : formatTokensPrecise(max * ratio),
       }))
     }
 
@@ -4847,21 +4852,29 @@ window.__ModuleLoader__.load({
      * `spec.xLabel(point, index)` returns `{text, attrs}` for the X axis, and
      * `spec.readout(hovered, share)` returns the live readout text.
      */
+    /**
+     * The pure-CSS bar plot shared by the token charts (v0.25.0).
+     *
+     * v1.7.12: the hover state and the Y-axis text are now injectable, so the
+     * output-speed card can reuse this exact plot (same bar geometry, grid lines,
+     * labels and readout as 「本机 Token 用量」) without sharing the token chart's
+     * hover index — two charts in one dialog must not highlight each other.
+     */
     function buildChartPlot(state, points, spec) {
       const max = Math.max(...points.map((point) => point.total), 1)
       const total = points.reduce((sum, point) => sum + point.total, 0)
+      const hoverSource = spec.hoverIndex === undefined ? state.chartHover : spec.hoverIndex
       const hoverIndex =
-        Number.isInteger(state.chartHover) && state.chartHover >= 0 && state.chartHover < points.length
-          ? state.chartHover
-          : null
+        Number.isInteger(hoverSource) && hoverSource >= 0 && hoverSource < points.length ? hoverSource : null
       const hovered = hoverIndex === null ? null : points[hoverIndex]
       const hoverShare = hovered === null || total <= 0 ? 0 : Math.round((hovered.total / total) * 1000) / 10
+      const setHover = typeof spec.onHover === 'function' ? spec.onHover : setChartHover
       const handleMove = (event) => {
         const index = chartIndexFromEvent(event, points.length)
-        if (index !== null) setChartHover(index)
+        if (index !== null && (spec.skipEmptyHover !== true || points[index].total > 0)) setHover(index)
       }
-      const handleLeave = () => setChartHover(null)
-      const ticks = chartAxisTicks(max)
+      const handleLeave = () => setHover(null)
+      const ticks = chartAxisTicks(max, spec.tickText)
       const gridLines = ticks.map((tick) =>
         h('div', {
           key: `grid-${tick.ratio}`,
@@ -6314,6 +6327,105 @@ window.__ModuleLoader__.load({
             h('span', { key: 'hint', className: 'dsh-tokenlens-hint' }, t('statsSpeedEmpty')),
           )
         }
+        if (!dailyMode) {
+          // v1.7.12: the hourly view IS the same plot the token chart uses for its
+          // day drill-down — same bar geometry, grid lines, axis labels, readout
+          // and summary, so the two cards read identically. The only difference is
+          // the unit (tok/s instead of tokens), the sample-size encoding, and that
+          // an unmeasured hour keeps an empty slot instead of a zero-height bar.
+          const hourPoints = Array.from({ length: 24 }, (_, hour) => {
+            const entry = pointsSeries[hour] ?? null
+            return { hour, total: entry === null || entry === undefined ? 0 : entry.tps ?? 0, entry }
+          })
+          const measured = hourPoints.filter((point) => point.entry !== null && point.entry !== undefined)
+          let peakPoint = measured[0]
+          for (const point of measured) if (point.total > peakPoint.total) peakPoint = point
+          const weightedOutput = measured.reduce((sum, point) => sum + (point.entry.outputTokens ?? 0), 0)
+          const weightedSeconds = measured.reduce((sum, point) => sum + (point.entry.seconds ?? 0), 0)
+          const plot = buildChartPlot(state, hourPoints, {
+            hoverIndex: state.speedHover ?? null,
+            onHover: setSpeedHover,
+            // An hour with no sample has nothing to report: do not let the pointer
+            // land on its empty slot.
+            skipEmptyHover: true,
+            tickText: (value) => `${Math.round(value)}`,
+            bar: (point, index, meta) => {
+              const entry = point.entry
+              const measuredHere = entry !== null && entry !== undefined
+              const height = measuredHere && meta.max > 0 ? Math.max(2, Math.round((point.total / meta.max) * 1000) / 10) : 0
+              const steps = measuredHere ? entry.steps ?? 0 : 0
+              const tier = measuredHere ? (steps >= 20 ? 'high' : steps >= 3 ? 'mid' : 'low') : 'none'
+              return h(
+                'div',
+                {
+                  key: `hour-${point.hour}`,
+                  className: 'dsh-tokenlens-chart-bar-wrap',
+                  'data-speed-bar': String(point.hour),
+                  'data-sample-tier': tier,
+                  'data-speed-tps': String(point.total),
+                  'data-chart-hover': meta.hovered ? 'true' : 'false',
+                  title: measuredHere
+                    ? t('statsSpeedHourBarTitle', {
+                        hour: chartHourLabel(point.hour),
+                        tps: point.total.toFixed(1),
+                        tokens: formatTokensPrecise(entry.outputTokens),
+                        seconds: entry.seconds.toFixed(1),
+                      })
+                    : t('statsSpeedHourNoSample', { hour: chartHourLabel(point.hour) }),
+                },
+                h('div', {
+                  className: 'dsh-tokenlens-chart-bar',
+                  'data-empty': measuredHere ? 'false' : 'true',
+                  'data-height': String(height),
+                  style: { height: `${height}%` },
+                }),
+              )
+            },
+            xLabel: (point) => ({
+              text: chartHourLabel(point.hour),
+              attrs: { 'data-speed-xlabel': String(point.hour) },
+            }),
+            readout: (hovered) => {
+              const entry = hovered.entry
+              const parts = [
+                `${chartDayLabel(drilled.day)} ${chartHourLabel(hovered.hour)} · ${hovered.total.toFixed(1)} tok/s`,
+                ` · ${t('statsSpeedDetail', {
+                  tokens: formatTokensPrecise(entry.outputTokens),
+                  seconds: entry.seconds.toFixed(1),
+                })}`,
+              ]
+              if (entry.steps > 0 && entry.ttftSeconds > 0) {
+                parts.push(` · ${t('statsSpeedTtft', { seconds: (entry.ttftSeconds / entry.steps).toFixed(1) })}`)
+              }
+              if (entry.steps < 3) parts.push(` · ${t('statsSpeedSamplesLow', { steps: entry.steps })}`)
+              return parts.join('')
+            },
+          })
+          return h(
+            'div',
+            { key: 'hourly', className: 'dsh-tokenlens-chart dsh-tokenlens-speed-hourly', 'data-speed-plot': 'true' },
+            plot,
+            h(
+              'div',
+              { key: 'summary', className: 'dsh-tokenlens-chart-summary' },
+              h(
+                'span',
+                { key: 'peak', 'data-speed-summary': 'peak' },
+                t('statsSpeedPeakHours', {
+                  tps: peakPoint.total.toFixed(1),
+                  hour: chartHourLabel(peakPoint.hour),
+                }),
+              ),
+              h(
+                'span',
+                { key: 'avg', 'data-speed-summary': 'avg' },
+                t('statsSpeedTotal', {
+                  tps: weightedSeconds > 0 ? (weightedOutput / weightedSeconds).toFixed(1) : '0.0',
+                }),
+              ),
+            ),
+          )
+        }
         // The SVG scales to the card width; `preserveAspectRatio="none"` lets it
         // fill without keeping the viewBox ratio, and the hover targets are
         // transparent columns so nothing is distorted.
@@ -6373,7 +6485,6 @@ window.__ModuleLoader__.load({
               fill: 'transparent',
               // In daily mode the column is also the drill-down target.
               ...(dailyMode ? { 'data-speed-day': entry.day, onClick: () => activateSpeedDay(entry.day) } : {}),
-              ...(dailyMode ? {} : { 'data-speed-hour': String(index) }),
               'data-speed-tps': String(entry.tps ?? 0),
             },
             h('title', { key: 'tip' }, label),
@@ -6428,47 +6539,12 @@ window.__ModuleLoader__.load({
           })
         const peakY = yOf({ tps: peak })
         const troughY = yOf({ tps: trough })
-        // v1.7.11: the hourly view is a BAR chart.
-        //
-        // A rate sampled per hour is a distribution, not a trend: the question is
-        // "when was it slow", and a column answers that better than a line. More
-        // importantly a bar chart states absence honestly — an hour with no
-        // sample simply has no column, so there is nothing to bridge and no
-        // implication that the value drifted smoothly across the hole.
-        //
-        // The column's fill encodes how many steps it was built from: a rate from
-        // one or two steps is noise (a 0.005s decode window can read 2000+ tok/s),
-        // so it must not look as authoritative as one built from a hundred.
-        const hourBarNodes = dailyMode
-          ? []
-          : pointsSeries
-              .map((entry, index) => {
-                if (entry === null || entry === undefined) return null
-                const steps = entry.steps ?? 0
-                const tier = steps >= 20 ? 'high' : steps >= 3 ? 'mid' : 'low'
-                const top = yOf(entry)
-                const zeroY = height - pad
-                return h('rect', {
-                  key: `bar-${index}`,
-                  className: 'dsh-tokenlens-speed-bar',
-                  x: (xOf(index) - stepX * 0.31).toFixed(2),
-                  y: top.toFixed(2),
-                  width: Math.max(1, stepX * 0.62).toFixed(2),
-                  height: Math.max(0.8, zeroY - top).toFixed(2),
-                  'data-sample-tier': tier,
-                  'data-speed-bar': String(index),
-                  'aria-hidden': 'true',
-                })
-              })
-              .filter(Boolean)
-        const guides = dailyMode
-          ? [
-              guideOf(peak, 'guide-peak', peakY),
-              // Skip the trough line when it sits on top of the peak (a flat series).
-              Math.abs(troughY - peakY) < 3 ? null : guideOf(trough, 'guide-trough', troughY),
-            ].filter(Boolean)
-          : // Bars sit on the zero baseline already; only the peak needs a ruler.
-            [guideOf(peak, 'guide-peak', peakY)]
+        // Daily-only from here: the hourly view is the shared bar plot above.
+        const guides = [
+          guideOf(peak, 'guide-peak', peakY),
+          // Skip the trough line when it sits on top of the peak (a flat series).
+          Math.abs(troughY - peakY) < 3 ? null : guideOf(trough, 'guide-trough', troughY),
+        ].filter(Boolean)
         const svg = h(
           'svg',
           {
@@ -6481,7 +6557,7 @@ window.__ModuleLoader__.load({
             'aria-label': dailyMode ? t('statsSpeedTitle') : t('statsSpeedHourAria', { date: drilled.day }),
           },
           guides,
-          dailyMode ? lineNodes.flat() : hourBarNodes,
+          lineNodes.flat(),
           columns.filter(Boolean),
         )
         const hoverIndex =
@@ -6513,7 +6589,7 @@ window.__ModuleLoader__.load({
           { key: 'y', className: 'dsh-tokenlens-speed-yaxis', 'aria-hidden': 'true' },
           axisTick(peak, peakY, 'tick-peak'),
           // The trough ruler only exists on the curve; bars are read against zero.
-          dailyMode && Math.abs(troughY - peakY) >= 3 ? axisTick(trough, troughY, 'tick-trough') : null,
+          Math.abs(troughY - peakY) >= 3 ? axisTick(trough, troughY, 'tick-trough') : null,
           axisTick(0, height - pad, 'tick-zero'),
         )
         const crosshair =
@@ -6527,8 +6603,7 @@ window.__ModuleLoader__.load({
                 style: { left: `${(xOf(hoverIndex) / width) * 100}%` },
               })
         const marker =
-          // v1.7.11: a bar needs no marker dot — its own right edge is the value.
-          dailyMode && hovered !== null && hovered !== undefined
+          hovered !== null && hovered !== undefined
             ? h('div', {
                 key: 'dot',
                 className: 'dsh-tokenlens-speed-dot',
@@ -6539,15 +6614,7 @@ window.__ModuleLoader__.load({
                 },
               })
             : null
-        const readoutLabel = dailyMode ? hovered?.day : `${String(hoverIndex).padStart(2, '0')}:00`
-        const hoveredTier =
-          hovered === null || hovered === undefined
-            ? null
-            : (hovered.steps ?? 0) >= 20
-              ? 'high'
-              : (hovered.steps ?? 0) >= 3
-                ? 'mid'
-                : 'low'
+        const readoutLabel = hovered?.day
         const readout =
           hovered === null || hovered === undefined
             ? null
@@ -6577,25 +6644,16 @@ window.__ModuleLoader__.load({
                 hovered.steps > 0 && hovered.ttftSeconds > 0
                   ? ` · ${t('statsSpeedTtft', { seconds: (hovered.ttftSeconds / hovered.steps).toFixed(1) })}`
                   : null,
-                // v1.7.11: say how thin the sample is, in the readout itself.
-                !dailyMode && hoveredTier === 'low'
-                  ? ` · ${t('statsSpeedSamplesLow', { steps: hovered.steps })}`
-                  : null,
               )
-        // v1.7.10: labels are placed under their OWN point (not just first/last),
-        // so a 6-day curve shows all six dates; an hourly curve shows the clock
-        // every 6 hours. Reuses the token chart's index picker for consistency.
-        const labelIndices = dailyMode
-          ? chartXLabelIndices(count)
-          : [0, 6, 12, 18, 23].filter((index) => index < count)
+        // v1.7.10: labels are placed under their OWN point, so a 6-day curve shows
+        // all six dates. Reuses the token chart's index picker for consistency.
+        const labelIndices = chartXLabelIndices(count)
         const axis = h(
           'div',
           { key: 'axis', className: 'dsh-tokenlens-speed-axis', 'aria-hidden': 'true' },
           labelIndices.map((index) => {
             const entry = pointsSeries[index]
-            const text = dailyMode
-              ? (entry?.day ?? '').slice(5)
-              : `${String(index).padStart(2, '0')}:00`
+            const text = (entry?.day ?? '').slice(5)
             return h(
               'span',
               {
@@ -6615,7 +6673,7 @@ window.__ModuleLoader__.load({
             'div',
             {
               key: 'plotarea',
-              className: `dsh-tokenlens-speed-plot${dailyMode ? '' : ' dsh-tokenlens-speed-plot-hourly'}`,
+              className: 'dsh-tokenlens-speed-plot',
               'data-speed-mode': dailyMode ? 'day' : 'hour',
               onMouseMove: handleMove,
               onMouseLeave: handleLeave,
