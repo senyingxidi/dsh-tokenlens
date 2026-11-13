@@ -4581,15 +4581,23 @@ test('two rows with the same model id are told apart by their provider (v1.7.14)
   }
 })
 
-test('the three donut columns share the width equally (v1.7.17)', () => {
+test('the donut columns trade a little width between harness and models (v1.7.18)', () => {
   const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
-  // v1.7.16 widened the model column; the extra width read as a lopsided grid, so
-  // all three are equal again — a long model name may wrap, which is fine.
-  assert.match(source, /\.dsh-tokenlens-donut-group\{flex:1 1 260px\}/, 'one flex rule for every group')
+  assert.match(source, /\.dsh-tokenlens-donut-group\{flex:1 1 260px\}/, 'the base rule still sets the default')
+  assert.match(
+    source,
+    /\[data-donut-group=harness-chart\]\{flex:0\.8 1 200px\}/,
+    'the harness column gives up some width',
+  )
+  assert.match(
+    source,
+    /\[data-donut-group=model-chart\]\{flex:1\.35 1 320px\}/,
+    'the model column takes it',
+  )
   assert.doesNotMatch(
     source,
-    /\[data-donut-group=model-chart\]\{flex:/,
-    'no per-column flex override survives',
+    /\[data-donut-group=provider-chart\]\{flex:/,
+    'the provider column keeps the base width — three different ratios read as a lopsided grid',
   )
 })
 
