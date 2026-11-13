@@ -4536,6 +4536,50 @@ test('the 明细 donuts line up and their dots sit on the first label line (v1.7
   )
 })
 
+test('two rows with the same model id are told apart by their provider (v1.7.14)', async () => {
+  // The real case: `deepseek-v4.1-flash` used through OpenCode *and* Command Code
+  // showed up twice with nothing to distinguish the rows.
+  const stats = statsFixture()
+  const modelRow = (providerId, label, total) => ({
+    key: `${providerId}/deepseek-v4.1-flash`,
+    providerId,
+    modelId: 'deepseek-v4.1-flash',
+    today: bucket({ total }),
+    last7Days: bucket({ total }),
+    last30Days: bucket({ total }),
+    allTime: bucket({ total }),
+    sinceEffective: null,
+  })
+  stats.models = [modelRow('opencode-go', 'OpenCode', 600), modelRow('commandcode', 'Command Code', 400)]
+  const plugin = loadPlugin((payload) => {
+    if (payload.action === 'hello') return { ok: true }
+    if (payload.action === 'stats') return { ok: true, stats }
+    if (payload.action === 'providers') return providersFixture()
+    return { ok: true, snapshot: snapshotFixture(payload.providerId) }
+  })
+  try {
+    // Donuts live in 图表 mode, which is what the dialog opens in.
+    const chartTree = await settleDialog(plugin, 'opencode-go')
+    const group = findElement(chartTree, (element) => element.props?.['data-donut-group'] === 'model-chart')
+    assert.ok(group, 'the model donut renders')
+    assert.deepEqual(
+      findAll(group, (element) => element.props?.['data-breakdown-provider'] !== undefined).map(
+        (element) => element.props['data-breakdown-provider'],
+      ),
+      ['OpenCode', 'Command Code'],
+      'the identical model ids now name their providers',
+    )
+    // The data-mode table carries the same marker.
+    const dataTree = switchToDataView(plugin, chartTree)
+    assert.ok(
+      findAll(dataTree, (element) => element.props?.['data-breakdown-provider'] !== undefined).length >= 2,
+      '数据 mode model rows carry the chip too',
+    )
+  } finally {
+    plugin.dispose()
+  }
+})
+
 test('the chip uses a native title and the speed card is full width (v1.7.1)', async () => {
   // Two layout-safety guarantees:
   //  - the chip must not mount a Tooltip bubble, which overflowed a narrow dock,
@@ -6794,7 +6838,9 @@ function donutGroupOf(tree, key) {
 /** The text of every legend cell of one donut group (title tooltips excluded). */
 function legendCellsOf(group, className) {
   return findAll(group, (element) => element.props?.className === className).map((element) =>
-    (element.children ?? []).map((child) => String(child)).join(''),
+    // v1.7.14: a cell may contain element children (the provider chip), so walk
+    // the tree instead of String()-ing each child.
+    collectText(element.children ?? []).join(''),
   )
 }
 
@@ -6882,7 +6928,28 @@ test('the 明细 donuts render proportional segments, centre totals and ranked l
     assert.deepEqual(legendCellsOf(providerGroup, 'dsh-tokenlens-donut-legend-percent'), ['80.0%', '20.0%'])
     assert.deepEqual(legendCellsOf(providerGroup, 'dsh-tokenlens-donut-legend-value'), ['80.000M', '20.000M'])
     const modelGroup = donutGroupOf(tree, 'model-chart')
-    assert.deepEqual(legendCellsOf(modelGroup, 'dsh-tokenlens-donut-legend-label'), ['model-a', 'model-b'])
+    // v1.7.14: each model row is prefixed with its provider, so two rows sharing
+    // a model id are tellable apart. The chip is a separate node, so assert the
+    // chip and the model name separately rather than the concatenation.
+    assert.deepEqual(
+      findAll(modelGroup, (element) => element.props?.['data-breakdown-provider'] !== undefined).map(
+        (element) => element.props['data-breakdown-provider'],
+      ),
+      ['OpenCode', 'OpenCode'],
+      'every model row names its provider',
+    )
+    assert.deepEqual(
+      findAll(modelGroup, (element) => element.props?.className === 'dsh-tokenlens-donut-legend-label').map((element) =>
+        collectText(element.children ?? []).filter((text) => text !== 'OpenCode').join(''),
+      ),
+      ['model-a', 'model-b'],
+      'the model name still follows the chip',
+    )
+    assert.equal(
+      findAll(modelGroup, (element) => element.props?.className === 'dsh-tokenlens-donut-legend-label')[0].props.title,
+      'OpenCode · model-a',
+      'the tooltip spells out provider + model',
+    )
     assert.deepEqual(legendCellsOf(modelGroup, 'dsh-tokenlens-donut-legend-percent'), ['75.0%', '25.0%'])
     assert.deepEqual(legendCellsOf(modelGroup, 'dsh-tokenlens-donut-legend-value'), ['75.000M', '25.000M'])
 
