@@ -6983,7 +6983,19 @@ test('the 明细 donuts render proportional segments, centre totals and ranked l
       'groups share the row at flex 1 1 260px',
     )
     assert.match(source, /\.dsh-tokenlens-donut-legend-label\{[^}]*text-overflow:ellipsis/, 'long legend labels truncate')
-    assert.match(source, /\.dsh-tokenlens-donut-wrap\{[^}]*flex-wrap:wrap/, 'the donut+legend pair wraps on narrow screens')
+    // v1.7.20: the ring and its legend must stay side by side at every column
+    // width, so the pair never wraps and the legend's basis never exceeds the
+    // space left beside a 96px ring.
+    assert.match(
+      source,
+      /\.dsh-tokenlens-donut-wrap\{[^}]*flex-wrap:nowrap/,
+      'the donut+legend pair never wraps',
+    )
+    assert.match(
+      source,
+      /\.dsh-tokenlens-donut-legend\{[^}]*flex:1 1 0/,
+      'the legend shares the row instead of demanding 150px',
+    )
     assert.match(source, /@media \(max-width:680px\)\{\.dsh-tokenlens-donut-wrap/, 'the narrow layout collapses to one column')
   } finally {
     plugin.dispose()
