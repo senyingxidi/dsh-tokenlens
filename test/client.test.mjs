@@ -4581,24 +4581,21 @@ test('two rows with the same model id are told apart by their provider (v1.7.14)
   }
 })
 
-test('the donut columns trade a little width between harness and models (v1.7.18)', () => {
+test('the donut columns are split strictly by ratio (v1.7.19)', () => {
   const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   assert.match(source, /\.dsh-tokenlens-donut-group\{flex:1 1 260px\}/, 'the base rule still sets the default')
+  // basis 0 makes flex-grow the real proportion; a non-zero basis dilutes it.
+  // min-width guards the donut + legend from collapsing into a wrapped stack.
   assert.match(
     source,
-    /\[data-donut-group=harness-chart\]\{flex:0\.8 1 200px\}/,
-    'the harness column gives up some width',
+    /\[data-donut-group=harness-chart\]\{flex:0\.82 1 0;min-width:224px\}/,
+    'harness is narrowest',
   )
-  assert.match(
-    source,
-    /\[data-donut-group=model-chart\]\{flex:1\.35 1 320px\}/,
-    'the model column takes it',
-  )
-  assert.doesNotMatch(
-    source,
-    /\[data-donut-group=provider-chart\]\{flex:/,
-    'the provider column keeps the base width — three different ratios read as a lopsided grid',
-  )
+  assert.match(source, /\[data-donut-group=provider-chart\]\{flex:1 1 0;min-width:224px\}/, 'provider is the middle')
+  assert.match(source, /\[data-donut-group=model-chart\]\{flex:1\.35 1 0;min-width:224px\}/, 'the model column is widest')
+  // The donut/data side-by-side arrangement must survive the re-split.
+  assert.match(source, /\.dsh-tokenlens-donut-wrap\{[^}]*display:flex/, 'donut and legend stay in one row')
+  assert.match(source, /\.dsh-tokenlens-donut\{[^}]*flex:none;width:96px/, 'the ring keeps its fixed square')
 })
 
 test('the chip uses a native title and the speed card is full width (v1.7.1)', async () => {
