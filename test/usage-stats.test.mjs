@@ -466,8 +466,66 @@ test('cache file is written and reused by a second service instance', async (t) 
   const raw = JSON.parse(await readFile(join(dshHome, 'dsh-tokenlens', 'usage-cache.json'), 'utf8'))
   // v1.7.0 bumped the schema: the cache now carries per-day output-speed samples.
   // v1.7.7 added per-hour speed samples; v1.7.9 added the first-token wait.
-  assert.equal(raw.version, 8)
+  assert.equal(raw.version, 9)
   assert.ok(Object.keys(raw.files).length === 1)
+})
+
+test('an unchanged external harness is restored from the cache, and a changed one re-parses (v1.7.27)', async (t) => {
+  const dshHome = await mkdtemp(join(tmpdir(), 'tokenlens-home-'))
+  t.after(() => rm(dshHome, { recursive: true, force: true }))
+  const root = join(dshHome, 'workbuddy-projects')
+  await mkdir(join(root, 'proj'), { recursive: true })
+  const file = join(root, 'proj', 'session.jsonl')
+  const record = (id, tokens) =>
+    JSON.stringify({
+      timestamp: new Date(todayAt(10)).toISOString(),
+      providerData: {
+        conversationRequestId: id,
+        messageId: `${id}-m`,
+        stepSeq: 0,
+        model: 'glm-5.3',
+        rawUsage: { prompt_tokens: tokens, completion_tokens: 0, total_tokens: tokens },
+      },
+    })
+  await writeFile(file, `${record('r1', 100)}\n`, 'utf8')
+  const config = {
+    stats: {
+      ttlMs: 0,
+      harnesses: { dsh: true, zcode: false, opencode: false, workbuddy: true, qoder: false },
+      workbuddy: { root },
+    },
+  }
+  const first = createUsageStats({ dshHome, config, log: { info() {}, warn() {} } })
+  assert.equal((await first.get()).allTime.total, 100, 'the JSONL row is counted')
+
+  // The parsed rows are persisted, so a fresh process can skip the parse.
+  const raw = JSON.parse(await readFile(join(dshHome, 'dsh-tokenlens', 'usage-cache.json'), 'utf8'))
+  assert.ok(raw.harness?.workbuddy?.sig, 'the harness signature is persisted')
+  assert.equal(typeof raw.harness.workbuddy.value.groups.length, 'number', 'so are its groups')
+
+  // A second service (a new process, in practice) restores instead of re-parsing.
+  const second = createUsageStats({ dshHome, config, log: { info() {}, warn() {} } })
+  const restored = await second.get()
+  assert.equal(restored.allTime.total, 100, 'the restored rows still count')
+
+  // A changed store invalidates the cached rows.
+  await writeFile(file, `${record('r1', 100)}\n${record('r2', 55)}\n`, 'utf8')
+  const third = createUsageStats({ dshHome, config, log: { info() {}, warn() {} } })
+  assert.equal((await third.get()).allTime.total, 155, 'a changed JSONL file is re-parsed')
+})
+
+test('the Qoder signature covers settings.json so a mapping edit invalidates the cache (v1.7.27)', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'tokenlens-qoder-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  await mkdir(join(root, 'projects'), { recursive: true })
+  await writeFile(join(root, 'settings.json'), '{"providers":{}}', 'utf8')
+  const { jsonlTreeSignature, fileSignature } = await import('../lib/usage-jsonl.mjs')
+  const signatureOf = (path) => jsonlTreeSignature(join(path, 'projects')) + '|' + fileSignature(join(path, 'settings.json'))
+  const before = signatureOf(root)
+  // Same content but a new mtime is enough: the size stays identical here.
+  await new Promise((resolve) => setTimeout(resolve, 12))
+  await writeFile(join(root, 'settings.json'), '{"providers":{"x":1}}', 'utf8')
+  assert.notEqual(signatureOf(root), before, 'editing the provider mapping changes the signature')
 })
 
 test('a missing sessions directory yields empty totals, not a crash', async (t) => {
