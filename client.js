@@ -3640,6 +3640,10 @@ window.__ModuleLoader__.load({
    the middle of a wrapped two-line model name. */
 .dsh-tokenlens-donut-dot{flex:none;width:8px;height:8px;border-radius:50%;margin-top:4px}
 .dsh-tokenlens-donut-legend-label{color:var(--dsw-alias-label-secondary);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:normal;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+/* v1.7.14: the provider chip that disambiguates a model id shared by providers.
+   Inside a line-clamp box an inline-block stays on the first line, so the model
+   name keeps wrapping but the provider never drifts to a second line. */
+.dsh-tokenlens-breakdown-provider{display:inline-block;box-sizing:border-box;max-width:5.5em;margin-right:4px;padding:0 4px;border-radius:3px;font-size:10px;line-height:1.3;font-weight:600;letter-spacing:.02em;color:var(--dsw-alias-label-tertiary);background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.2));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:1px}
 .dsh-tokenlens-donut-legend-percent{color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
 .dsh-tokenlens-donut-legend-value{color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
 @media (max-width:680px){.dsh-tokenlens-donut-wrap{align-items:flex-start}.dsh-tokenlens-details-charts-grid>.dsh-tokenlens-chart-group,.dsh-tokenlens-details-charts>.dsh-tokenlens-chart-group{flex-basis:100%}.dsh-tokenlens-details-charts-grid>.dsh-tokenlens-chart-group+.dsh-tokenlens-chart-group,.dsh-tokenlens-details-charts>.dsh-tokenlens-chart-group+.dsh-tokenlens-chart-group{border-left:0;padding-left:0;border-top:1px solid var(--dsw-alias-border-subtle,rgba(127,127,127,.24));padding-top:8px}}
@@ -5627,6 +5631,43 @@ window.__ModuleLoader__.load({
      * tooltip) followed by one right-aligned value cell per window, so the header
      * labels and the values are literally the same table columns.
      */
+    /**
+     * The provider that served a model id (v1.7.14).
+     *
+     * The same model id can be reached through several providers — `deepseek-v4.1-flash`
+     * appears twice in one list when it was used through OpenCode *and* Command
+     * Code — so a model name alone is ambiguous. The label comes from the stats
+     * provider rows (wire label), then the built-in catalog, then the raw id.
+     */
+    function providerDisplayLabelOf(stats, providerId) {
+      const id = stringOrEmpty(providerId)
+      if (id === '') return ''
+      const rows = stats === null || !Array.isArray(stats.providers) ? [] : stats.providers
+      const exact = rows.find((row) => row.providerId === id)
+      if (exact !== undefined) return exact.label
+      const canonical = canonicalProviderId(id)
+      const aliased = rows.find((row) => canonicalProviderId(row.providerId) === canonical)
+      if (aliased !== undefined) return aliased.label
+      return PROVIDER_LABELS[id] ?? PROVIDER_LABELS[canonical] ?? id
+    }
+
+    /** A compact provider chip, shown before a model name to disambiguate it. */
+    function buildProviderChip(label) {
+      const text = stringOrEmpty(label)
+      if (text === '') return null
+      // No `title` here: the enclosing label already carries "provider · model",
+      // so the chip only has to draw the name.
+      return h(
+        'span',
+        {
+          key: 'provider',
+          className: 'dsh-tokenlens-breakdown-provider',
+          'data-breakdown-provider': text,
+        },
+        text,
+      )
+    }
+
     function buildDetailsTableItem(name, values, options = {}) {
       const extras = options.attrs !== null && typeof options.attrs === 'object' ? options.attrs : {}
       const title = options.title === undefined ? name : options.title
@@ -5639,7 +5680,15 @@ window.__ModuleLoader__.load({
           style: { display: 'table-row' },
           ...extras,
         },
-        h('td', { className: 'dsh-tokenlens-details-table-name', title, style: { display: 'table-cell', textAlign: 'left' } }, h('div', { className: 'dsh-tokenlens-details-table-name-text' }, name)),
+        h(
+          'td',
+          { className: 'dsh-tokenlens-details-table-name', title, style: { display: 'table-cell', textAlign: 'left' } },
+          h(
+            'div',
+            { className: 'dsh-tokenlens-details-table-name-text' },
+            options.prefix === undefined || options.prefix === null ? name : [options.prefix, name],
+          ),
+        ),
         values.map((value, index) =>
           h(
             'td',
@@ -6152,7 +6201,22 @@ window.__ModuleLoader__.load({
             style: { backgroundColor: DONUT_PALETTE[index % DONUT_PALETTE.length] },
             'aria-hidden': 'true',
           }),
-          h('span', { className: 'dsh-tokenlens-donut-legend-label', title: row.label }, row.label),
+          (() => {
+            // v1.7.14: the provider chip precedes the name when the row knows it, so
+            // two rows with the same model id are still tellable apart.
+            const chip = buildProviderChip(row.providerLabel)
+            return h(
+              'span',
+              {
+                className: 'dsh-tokenlens-donut-legend-label',
+                title:
+                  row.providerLabel === undefined || row.providerLabel === ''
+                    ? row.label
+                    : `${row.providerLabel} · ${row.label}`,
+              },
+              chip === null ? row.label : [chip, row.label],
+            )
+          })(),
           h(
             'span',
             { className: 'dsh-tokenlens-donut-legend-percent' },
@@ -6251,6 +6315,8 @@ window.__ModuleLoader__.load({
       const modelRows = stats.models.map((model) => ({
         label: model.modelId,
         value: detailsWindowTotalOf(windowKey, model, ctx.secondModelOf),
+        // v1.7.14: disambiguate a model id shared by several providers.
+        providerLabel: providerDisplayLabelOf(stats, model.providerId),
       }))
       const modelChart = buildBreakdownDonutGroup('model-chart', t('statsTopModels'), 'cube', modelRows, t)
       if (modelChart !== null) groups.push(modelChart)
@@ -6848,7 +6914,9 @@ window.__ModuleLoader__.load({
           .map((model) =>
             buildDetailsTableItem(model.modelId, detailsTableValues(model, ctx, ctx.secondModelOf, 'model'), {
               key: model.key,
-              title: model.modelId,
+              title: `${providerDisplayLabelOf(stats, model.providerId)} · ${model.modelId}`,
+              // v1.7.14: same disambiguation as the donut legend.
+              prefix: buildProviderChip(providerDisplayLabelOf(stats, model.providerId)),
               attrs: { className: 'dsh-tokenlens-details-table-row dsh-tokenlens-model-row' },
             }),
           )
