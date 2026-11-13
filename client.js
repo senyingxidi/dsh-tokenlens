@@ -3627,12 +3627,6 @@ window.__ModuleLoader__.load({
 .dsh-tokenlens-details-charts>.dsh-tokenlens-section-head{flex:1 1 100%}
 .dsh-tokenlens-chart-group{display:flex;flex-direction:column;gap:4px;min-width:0}
 .dsh-tokenlens-donut-group{flex:1 1 260px}
-/* v1.7.16: the model column carries the longest labels (model id + provider code),
-   so it gets the extra width instead of wrapping into two lines next to a wide gap
-   in the other two columns. */
-.dsh-tokenlens-details-charts-grid>.dsh-tokenlens-donut-group[data-donut-group=model-chart]{flex:1.9 1 360px}
-.dsh-tokenlens-details-charts-grid>.dsh-tokenlens-donut-group[data-donut-group=harness-chart],
-.dsh-tokenlens-details-charts-grid>.dsh-tokenlens-donut-group[data-donut-group=provider-chart]{flex:0.85 1 220px}
 .dsh-tokenlens-donut-wrap{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0;max-width:100%}
 .dsh-tokenlens-donut{position:relative;flex:none;width:96px;height:96px;display:flex;align-items:center;justify-content:center}
 .dsh-tokenlens-donut-svg{display:block;width:96px;height:96px;overflow:visible}
