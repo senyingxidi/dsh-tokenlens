@@ -4626,6 +4626,24 @@ test('harness and provider names never wrap in the donut legends (v1.7.23)', () 
   )
 })
 
+test('data-mode name cells keep provider names whole (v1.7.25)', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  // Numeric columns are 52px so the name column keeps room for "Command Code".
+  assert.match(source, /\.dsh-tokenlens-details-table \.dsh-tokenlens-details-table-col-window\{width:52px\}/, 'narrow numeric columns')
+  assert.match(source, /style: \{ width: '52px' \}/, 'the colgroup agrees')
+  // break-word wraps between words instead of cutting "Command" into "Comm…".
+  assert.match(
+    source,
+    /td\.dsh-tokenlens-details-table-name\{[^}]*overflow-wrap:break-word/,
+    'names break between words, not inside them',
+  )
+  assert.match(
+    source,
+    /\.dsh-tokenlens-details-table-name-text\{[^}]*overflow-wrap:break-word/,
+    'the clamp box breaks the same way',
+  )
+})
+
 test('the chip uses a native title and the speed card is full width (v1.7.1)', async () => {
   // Two layout-safety guarantees:
   //  - the chip must not mount a Tooltip bubble, which overflowed a narrow dock,
@@ -7704,7 +7722,7 @@ test('数据 mode 明细 stacks three full-width breakdown blocks vertically', a
     )
     assert.match(source, /\.dsh-tokenlens-details-columns\{[^}]*display:grid[^}]*grid-template-columns:minmax\(0,1fr\)/, 'the columns wrapper is a grid')
     assert.match(source, /minmax\(320px,1fr\) minmax\(0,1\.15fr\) minmax\(0,1\.35fr\)/, 'the grid ratios are present')
-    assert.match(source, /\.dsh-tokenlens-details-table \.dsh-tokenlens-details-table-col-window\{width:64px\}/, 'window columns are 64px')
+    assert.match(source, /\.dsh-tokenlens-details-table \.dsh-tokenlens-details-table-col-window\{width:52px\}/, 'window columns are 52px')
     assert.match(
       source,
       /\.dsh-tokenlens-details-table-name-text\{[^}]*display:-webkit-box[^}]*line-clamp:2/,
@@ -7849,7 +7867,7 @@ test('detail rows are real one-row HTML table rows with aligned th/td columns', 
       assert.equal(cols.length, 1 + headLabels.length, 'one name col + one window col per window')
       assert.equal(cols[0].props.className, 'dsh-tokenlens-details-table-col-name', 'the first col is the auto name column')
       assert.equal(cols[1].props.className, 'dsh-tokenlens-details-table-col-window')
-      assert.equal(cols[1].props.style.width, '64px', 'window columns are 64px wide')
+      assert.equal(cols[1].props.style.width, '52px', 'window columns are 52px wide')
       // thead: a spacer th + one label th per window
       const thead = findElement(table, (element) => element.type === 'thead')
       assert.ok(thead, 'each table has a thead')
@@ -7899,7 +7917,7 @@ test('detail rows are real one-row HTML table rows with aligned th/td columns', 
     // Static: fixed table layout + vertical stack blocks + 2-line name clamp.
     const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
     assert.match(source, /\.dsh-tokenlens-details-table\{width:100%;min-width:100%;table-layout:fixed;border-collapse:collapse/, 'fixed table layout + collapsed borders')
-    assert.match(source, /\.dsh-tokenlens-details-table \.dsh-tokenlens-details-table-col-window\{width:64px\}/, 'window cols are fixed at 64px')
+    assert.match(source, /\.dsh-tokenlens-details-table \.dsh-tokenlens-details-table-col-window\{width:52px\}/, 'window cols are fixed at 52px')
     assert.match(source, /\.dsh-tokenlens-details-stack\{display:flex;flex-direction:column;gap:10px;min-width:0\}/, 'the blocks stack vertically')
     assert.match(source, /\.dsh-tokenlens-details-block\{display:flex;flex-direction:column;gap:3px;min-width:0\}/, 'each block is a head + table column')
     assert.match(source, /\.dsh-tokenlens-details-columns\{[^}]*display:grid/, 'the columns wrapper CSS is present')

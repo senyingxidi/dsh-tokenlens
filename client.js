@@ -3599,14 +3599,14 @@ window.__ModuleLoader__.load({
 .dsh-tokenlens-details-block{display:flex;flex-direction:column;gap:3px;min-width:0}
 .dsh-tokenlens-details-block .dsh-tokenlens-breakdown-head{margin:0;padding:0;min-width:0}
 .dsh-tokenlens-details-table{width:100%;min-width:100%;table-layout:fixed;border-collapse:collapse;font-variant-numeric:tabular-nums}
-.dsh-tokenlens-details-table .dsh-tokenlens-details-table-col-window{width:64px}
+.dsh-tokenlens-details-table .dsh-tokenlens-details-table-col-window{width:52px}
 .dsh-tokenlens-details-table thead .dsh-tokenlens-details-table-label{color:var(--dsw-alias-label-tertiary);font-size:var(--dsw-alias-font-size-sm,12px);font-weight:400;line-height:1.5;text-align:right;padding:1px 2px;border-bottom:1px solid var(--dsw-alias-border-subtle,rgba(127,127,127,.18));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dsh-tokenlens-details-table thead .dsh-tokenlens-details-table-spacer{color:var(--dsw-alias-label-tertiary);font-size:var(--dsw-alias-font-size-sm,12px);font-weight:400;line-height:1.5;text-align:left;padding:1px 2px;border-bottom:1px solid var(--dsw-alias-border-subtle,rgba(127,127,127,.18));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dsh-tokenlens-details-table tbody tr{border-top:1px solid var(--dsw-alias-border-subtle,rgba(127,127,127,.14))}
 .dsh-tokenlens-details-table tbody tr:first-child{border-top:0}
 .dsh-tokenlens-details-table td{padding:1px 2px;vertical-align:top;line-height:1.35}
-.dsh-tokenlens-details-table td.dsh-tokenlens-details-table-name{color:var(--dsw-alias-label-secondary);font-size:11px;line-height:1.3;white-space:normal;overflow-wrap:anywhere;min-width:0}
-.dsh-tokenlens-details-table-name-text{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;overflow-wrap:anywhere}
+.dsh-tokenlens-details-table td.dsh-tokenlens-details-table-name{color:var(--dsw-alias-label-secondary);font-size:11px;line-height:1.3;white-space:normal;overflow-wrap:break-word;min-width:0}
+.dsh-tokenlens-details-table-name-text{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;overflow-wrap:break-word}
 .dsh-tokenlens-details-table td.dsh-tokenlens-details-table-cell{color:var(--dsw-alias-label-secondary);font-size:10px;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:2px}
 .dsh-tokenlens-details-table td.dsh-tokenlens-details-table-note{font-size:10px;line-height:1.45;padding:2px;overflow-wrap:anywhere;white-space:normal}
 .dsh-tokenlens-details-table tr.dsh-tokenlens-harness-error-row .dsh-tokenlens-harness-hint{display:block;margin-top:1px}
@@ -5600,14 +5600,17 @@ window.__ModuleLoader__.load({
       return values
     }
 
-    /** The window `<col>` elements: an auto name column + one 54px column per window. */
+    /** The window `<col>` elements: an auto name column + one 52px column per window. */
     function buildDetailsTableColgroup(columns) {
       return h(
         'colgroup',
         { key: 'colgroup' },
         h('col', { key: 'name', className: 'dsh-tokenlens-details-table-col-name' }),
         columns.map((column) =>
-          h('col', { key: column.key, className: 'dsh-tokenlens-details-table-col-window', style: { width: '64px' } }),
+          // v1.7.25: 64px -> 52px. Three tables sit side by side, so every pixel the
+          // numeric columns take comes straight out of the name column: at 64px a
+          // provider name had ~40px and rendered as "Comm…".
+          h('col', { key: column.key, className: 'dsh-tokenlens-details-table-col-window', style: { width: '52px' } }),
         ),
       )
     }
