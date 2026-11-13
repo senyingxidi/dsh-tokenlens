@@ -3627,6 +3627,12 @@ window.__ModuleLoader__.load({
 .dsh-tokenlens-details-charts>.dsh-tokenlens-section-head{flex:1 1 100%}
 .dsh-tokenlens-chart-group{display:flex;flex-direction:column;gap:4px;min-width:0}
 .dsh-tokenlens-donut-group{flex:1 1 260px}
+/* v1.7.16: the model column carries the longest labels (model id + provider code),
+   so it gets the extra width instead of wrapping into two lines next to a wide gap
+   in the other two columns. */
+.dsh-tokenlens-details-charts-grid>.dsh-tokenlens-donut-group[data-donut-group=model-chart]{flex:1.9 1 360px}
+.dsh-tokenlens-details-charts-grid>.dsh-tokenlens-donut-group[data-donut-group=harness-chart],
+.dsh-tokenlens-details-charts-grid>.dsh-tokenlens-donut-group[data-donut-group=provider-chart]{flex:0.85 1 220px}
 .dsh-tokenlens-donut-wrap{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0;max-width:100%}
 .dsh-tokenlens-donut{position:relative;flex:none;width:96px;height:96px;display:flex;align-items:center;justify-content:center}
 .dsh-tokenlens-donut-svg{display:block;width:96px;height:96px;overflow:visible}
@@ -4416,12 +4422,11 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * The provider/plan/account/model header line, or null when nothing is known.
+     * The plan/model header line, or null when nothing is known.
      *
-     * v1.7.13: the model in use is part of this line. It matters for Command Code
-     * because the monthly allowance is per-model, but it is useful everywhere —
-     * "which model was this usage produced by" is the first question the card
-     * raises.
+     * v1.7.16: the account name is no longer shown here — the card is about the
+     * plan and the model in use, and the account added a third item that pushed
+     * the line into wrapping. It stays on the wire for diagnostics.
      */
     function buildProviderHeader(snapshot, t, modelId) {
       if (snapshot === null) return null
@@ -4430,14 +4435,6 @@ window.__ModuleLoader__.load({
       if (plan !== null && plan.label !== '') {
         parts.push(h('span', { key: 'plan', className: 'dsh-tokenlens-plan' }, t('planPrefix', { plan: plan.label })))
       }
-      const account = snapshot.account
-      const name =
-        account === null
-          ? ''
-          : account.userName !== ''
-            ? account.userName
-            : account.name
-      if (name !== '') parts.push(h('span', { key: 'account', className: 'dsh-tokenlens-account' }, t('accountPrefix', { name })))
       const model = typeof modelId === 'string' ? modelId.trim() : ''
       if (model !== '') {
         parts.push(
@@ -4447,6 +4444,22 @@ window.__ModuleLoader__.load({
             t('modelPrefix', { model }),
           ),
         )
+      }
+      // A provider that reports NEITHER a plan nor a model still gets its account
+      // as the only identifier (balance providers such as DeepSeek).
+      if (parts.length === 0) {
+        const account = snapshot.account
+        const name =
+          account === null
+            ? ''
+            : account.userName !== ''
+              ? account.userName
+              : account.name
+        if (name !== '') {
+          parts.push(
+            h('span', { key: 'account', className: 'dsh-tokenlens-account' }, t('accountPrefix', { name })),
+          )
+        }
       }
       if (parts.length === 0) return null
       return h('div', { key: 'provider', className: 'dsh-tokenlens-provider' }, parts)

@@ -1629,7 +1629,8 @@ test('a command code dialog shows the dollar capacity and the derived monthly pe
     const text = textOf(tree)
     assert.match(text, /Command Code/)
     assert.match(text, /套餐：Beginner/)
-    assert.match(text, /账户：dev@example\.com/)
+    // v1.7.16: the account name is no longer part of the capacity header.
+    assert.doesNotMatch(text, /账户：dev@example\.com/)
     assert.match(text, /加购 \$0\.00/)
     // v1.7.4: 剩余/本月额度 were removed — only the purchased amount stays.
     assert.doesNotMatch(text, /剩余 \$4\.50/)
@@ -4578,6 +4579,20 @@ test('two rows with the same model id are told apart by their provider (v1.7.14)
   } finally {
     plugin.dispose()
   }
+})
+
+test('the model column is wider than the other two (v1.7.16)', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert.match(
+    source,
+    /\[data-donut-group=model-chart\]\{flex:1\.9 1 360px\}/,
+    'the model group grows wider than the default',
+  )
+  assert.match(
+    source,
+    /\[data-donut-group=harness-chart\],[\s\S]{0,120}\[data-donut-group=provider-chart\]\{flex:0\.85 1 220px\}/,
+    'the other two groups give up that width',
+  )
 })
 
 test('the chip uses a native title and the speed card is full width (v1.7.1)', async () => {
