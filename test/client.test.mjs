@@ -4581,25 +4581,34 @@ test('two rows with the same model id are told apart by their provider (v1.7.14)
   }
 })
 
-test('the donut columns are split strictly by ratio (v1.7.19)', () => {
+test('short-label donut columns are sized by content (v1.7.24)', () => {
   const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   assert.match(source, /\.dsh-tokenlens-donut-group\{flex:1 1 260px\}/, 'the base rule still sets the default')
-  // basis 0 makes flex-grow the real proportion; a non-zero basis dilutes it.
-  // min-width guards the donut + legend from collapsing into a truncated stack.
-  assert.match(source, /\[data-donut-group=harness-chart\]\{flex:1 1 0;min-width:250px\}/, 'harness is pinned at 25%')
+  // A percentage cannot promise "the full provider name fits", so these two take
+  // their own content width and the model column absorbs the rest.
   assert.match(
     source,
-    /\[data-donut-group=provider-chart\]\{flex:1\.48 1 0;min-width:250px\}/,
-    'the provider column takes the freed width (37%)',
+    /\[data-donut-group=harness-chart\]\{flex:0 1 auto\}/,
+    'harness is content-sized',
   )
   assert.match(
     source,
-    /\[data-donut-group=model-chart\]\{flex:1\.52 1 0;min-width:250px\}/,
-    'the model column stays widest (38%)',
+    /\[data-donut-group=provider-chart\]\{flex:0 1 auto\}/,
+    'the provider column is content-sized, so no name is ever ellipsized for space',
   )
-  // The donut/data side-by-side arrangement must survive the re-split.
-  assert.match(source, /\.dsh-tokenlens-donut-wrap\{[^}]*display:flex/, 'donut and legend stay in one row')
+  assert.match(
+    source,
+    /\[data-donut-group=model-chart\]\{flex:1 1 0;min-width:250px\}/,
+    'the model column takes the remainder and keeps a readable floor',
+  )
+  // The donut/data side-by-side arrangement must survive.
+  assert.match(source, /\.dsh-tokenlens-donut-wrap\{[^}]*flex-wrap:nowrap/, 'the pair never wraps')
   assert.match(source, /\.dsh-tokenlens-donut\{[^}]*flex:none;width:96px/, 'the ring keeps its fixed square')
+  assert.match(
+    source,
+    /\[data-donut-group=provider-chart\] \.dsh-tokenlens-donut-legend-label\{display:block;white-space:nowrap/,
+    'provider names stay on one line',
+  )
 })
 
 test('harness and provider names never wrap in the donut legends (v1.7.23)', () => {
