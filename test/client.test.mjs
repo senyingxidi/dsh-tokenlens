@@ -4566,8 +4566,8 @@ test('two rows with the same model id are told apart by their provider (v1.7.14)
       findAll(group, (element) => element.props?.['data-breakdown-provider'] !== undefined).map(
         (element) => element.props['data-breakdown-provider'],
       ),
-      ['OpenCode', 'Command Code'],
-      'the identical model ids now name their providers',
+      ['OC', 'CC'],
+      'the identical model ids are marked with their provider code',
     )
     // The data-mode table carries the same marker.
     const dataTree = switchToDataView(plugin, chartTree)
@@ -6935,12 +6935,12 @@ test('the 明细 donuts render proportional segments, centre totals and ranked l
       findAll(modelGroup, (element) => element.props?.['data-breakdown-provider'] !== undefined).map(
         (element) => element.props['data-breakdown-provider'],
       ),
-      ['OpenCode', 'OpenCode'],
-      'every model row names its provider',
+      ['OC', 'OC'],
+      'every model row carries its provider code',
     )
     assert.deepEqual(
       findAll(modelGroup, (element) => element.props?.className === 'dsh-tokenlens-donut-legend-label').map((element) =>
-        collectText(element.children ?? []).filter((text) => text !== 'OpenCode').join(''),
+        collectText(element.children ?? []).filter((text) => text !== '(OC)').join(''),
       ),
       ['model-a', 'model-b'],
       'the model name still follows the chip',

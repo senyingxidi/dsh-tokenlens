@@ -3640,10 +3640,10 @@ window.__ModuleLoader__.load({
    the middle of a wrapped two-line model name. */
 .dsh-tokenlens-donut-dot{flex:none;width:8px;height:8px;border-radius:50%;margin-top:4px}
 .dsh-tokenlens-donut-legend-label{color:var(--dsw-alias-label-secondary);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:normal;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
-/* v1.7.14: the provider chip that disambiguates a model id shared by providers.
-   Inside a line-clamp box an inline-block stays on the first line, so the model
-   name keeps wrapping but the provider never drifts to a second line. */
-.dsh-tokenlens-breakdown-provider{display:inline-block;box-sizing:border-box;max-width:5.5em;margin-right:4px;padding:0 4px;border-radius:3px;font-size:10px;line-height:1.3;font-weight:600;letter-spacing:.02em;color:var(--dsw-alias-label-tertiary);background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.2));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:1px}
+/* v1.7.14/15: the provider code that follows a model name, e.g. (OC). It is a
+   suffix so the model stays the first thing the eye lands on; the full provider
+   name lives on the row's title. */
+.dsh-tokenlens-breakdown-provider{display:inline-block;margin-left:3px;font-size:10px;line-height:1.3;font-weight:600;letter-spacing:.02em;color:var(--dsw-alias-label-tertiary);white-space:nowrap;vertical-align:1px}
 .dsh-tokenlens-donut-legend-percent{color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
 .dsh-tokenlens-donut-legend-value{color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
 @media (max-width:680px){.dsh-tokenlens-donut-wrap{align-items:flex-start}.dsh-tokenlens-details-charts-grid>.dsh-tokenlens-chart-group,.dsh-tokenlens-details-charts>.dsh-tokenlens-chart-group{flex-basis:100%}.dsh-tokenlens-details-charts-grid>.dsh-tokenlens-chart-group+.dsh-tokenlens-chart-group,.dsh-tokenlens-details-charts>.dsh-tokenlens-chart-group+.dsh-tokenlens-chart-group{border-left:0;padding-left:0;border-top:1px solid var(--dsw-alias-border-subtle,rgba(127,127,127,.24));padding-top:8px}}
@@ -5651,12 +5651,35 @@ window.__ModuleLoader__.load({
       return PROVIDER_LABELS[id] ?? PROVIDER_LABELS[canonical] ?? id
     }
 
-    /** A compact provider chip, shown before a model name to disambiguate it. */
-    function buildProviderChip(label) {
-      const text = stringOrEmpty(label)
+    /**
+     * A compact provider code (v1.7.15): OC / CC / DS …
+     *
+     * The catalog short labels win; an unknown provider gets its initials. The
+     * full name stays on the row's hover title.
+     */
+    function providerShortCodeOf(stats, providerId) {
+      const id = stringOrEmpty(providerId)
+      if (id === '') return ''
+      const known = PROVIDER_SHORT_LABELS[id] ?? PROVIDER_SHORT_LABELS[canonicalProviderId(id)]
+      if (typeof known === 'string' && known !== '') return known
+      const full = providerDisplayLabelOf(stats, id)
+      if (full === '') return ''
+      const words = full.split(/[\s/·_-]+/).filter((word) => word !== '')
+      if (words.length >= 2) return words.slice(0, 3).map((word) => word[0].toUpperCase()).join('')
+      return full.slice(0, 3).toUpperCase()
+    }
+
+    /**
+     * The provider marker that follows a model name (v1.7.14, short code in
+     * v1.7.15): `deepseek-v4.1-flash (OC)`.
+     *
+     * It comes AFTER the name so the model stays the first thing the eye lands
+     * on, and it is only the code — the full provider name lives on the row's
+     * `title` (`OpenCode · deepseek-v4.1-flash`).
+     */
+    function buildProviderChip(code) {
+      const text = stringOrEmpty(code)
       if (text === '') return null
-      // No `title` here: the enclosing label already carries "provider · model",
-      // so the chip only has to draw the name.
       return h(
         'span',
         {
@@ -5664,7 +5687,7 @@ window.__ModuleLoader__.load({
           className: 'dsh-tokenlens-breakdown-provider',
           'data-breakdown-provider': text,
         },
-        text,
+        `(${text})`,
       )
     }
 
@@ -5687,6 +5710,7 @@ window.__ModuleLoader__.load({
             'div',
             { className: 'dsh-tokenlens-details-table-name-text' },
             options.prefix === undefined || options.prefix === null ? name : [options.prefix, name],
+            options.suffix === undefined || options.suffix === null ? null : options.suffix,
           ),
         ),
         values.map((value, index) =>
@@ -6202,9 +6226,9 @@ window.__ModuleLoader__.load({
             'aria-hidden': 'true',
           }),
           (() => {
-            // v1.7.14: the provider chip precedes the name when the row knows it, so
-            // two rows with the same model id are still tellable apart.
-            const chip = buildProviderChip(row.providerLabel)
+            // v1.7.14/15: `deepseek-v4.1-flash (OC)` — the marker follows the name
+            // so two rows with the same model id are still tellable apart.
+            const chip = buildProviderChip(row.providerCode)
             return h(
               'span',
               {
@@ -6214,7 +6238,7 @@ window.__ModuleLoader__.load({
                     ? row.label
                     : `${row.providerLabel} · ${row.label}`,
               },
-              chip === null ? row.label : [chip, row.label],
+              chip === null ? row.label : [row.label, chip],
             )
           })(),
           h(
@@ -6315,8 +6339,10 @@ window.__ModuleLoader__.load({
       const modelRows = stats.models.map((model) => ({
         label: model.modelId,
         value: detailsWindowTotalOf(windowKey, model, ctx.secondModelOf),
-        // v1.7.14: disambiguate a model id shared by several providers.
+        // v1.7.14/15: a model id shared by several providers is ambiguous — mark
+        // it with the provider's short code, full name on the row title.
         providerLabel: providerDisplayLabelOf(stats, model.providerId),
+        providerCode: providerShortCodeOf(stats, model.providerId),
       }))
       const modelChart = buildBreakdownDonutGroup('model-chart', t('statsTopModels'), 'cube', modelRows, t)
       if (modelChart !== null) groups.push(modelChart)
@@ -6915,8 +6941,8 @@ window.__ModuleLoader__.load({
             buildDetailsTableItem(model.modelId, detailsTableValues(model, ctx, ctx.secondModelOf, 'model'), {
               key: model.key,
               title: `${providerDisplayLabelOf(stats, model.providerId)} · ${model.modelId}`,
-              // v1.7.14: same disambiguation as the donut legend.
-              prefix: buildProviderChip(providerDisplayLabelOf(stats, model.providerId)),
+              // v1.7.14/15: same short-code marker as the donut legend.
+              suffix: buildProviderChip(providerShortCodeOf(stats, model.providerId)),
               attrs: { className: 'dsh-tokenlens-details-table-row dsh-tokenlens-model-row' },
             }),
           )
