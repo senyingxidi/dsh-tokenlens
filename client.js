@@ -3732,7 +3732,12 @@ window.__ModuleLoader__.load({
 .dsh-tokenlens-chart-bar-wrap:hover .dsh-tokenlens-chart-bar{filter:brightness(1.18)}
 .dsh-tokenlens-chart-bar-wrap[data-chart-hover=true] .dsh-tokenlens-chart-bar{background:#40c877;filter:brightness(1.12);box-shadow:0 0 0 1px rgba(64,200,119,.55)}
 .dsh-tokenlens-chart-crosshair{position:absolute;top:2px;height:160px;z-index:2;pointer-events:none;border-left:1px dashed #d98a1f;opacity:.7}
-.dsh-tokenlens-chart-readout{position:absolute;top:4px;z-index:3;pointer-events:none;max-width:calc(100% - 8px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border:1px solid var(--dsw-alias-border-subtle,rgba(127,127,127,.3));border-radius:6px;background:var(--dsw-alias-bg-elevated,#202124);color:var(--dsw-alias-label-primary);font-size:11px;line-height:1.4;padding:2px 6px;box-shadow:0 2px 8px rgba(0,0,0,.25);font-variant-numeric:tabular-nums}
+/* v1.7.26: the readout may wrap instead of being ellipsized. The TPS line carries
+   hour + rate + tokens ÷ seconds + first-token wait, which is wider than the plot;
+   cutting it with "…" hid the very numbers the hover exists to show. It stays
+   inside the plot because it is edge-anchored (see chartReadoutStyle) and capped
+   at the plot width. */
+.dsh-tokenlens-chart-readout{position:absolute;top:4px;z-index:3;pointer-events:none;max-width:calc(100% - 8px);white-space:normal;overflow-wrap:break-word;border:1px solid var(--dsw-alias-border-subtle,rgba(127,127,127,.3));border-radius:6px;background:var(--dsw-alias-bg-elevated,#202124);color:var(--dsw-alias-label-primary);font-size:11px;line-height:1.4;padding:2px 6px;box-shadow:0 2px 8px rgba(0,0,0,.25);font-variant-numeric:tabular-nums}
 .dsh-tokenlens-chart-xaxis{position:relative;flex:none;height:14px;min-width:0;max-width:100%;overflow:visible}
 .dsh-tokenlens-chart-x-label{position:absolute;top:2px;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:1.2;white-space:nowrap;font-variant-numeric:tabular-nums}
 .dsh-tokenlens-chart-summary{display:flex;flex-wrap:wrap;gap:4px 12px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:1.4;min-width:0}
@@ -4799,6 +4804,21 @@ window.__ModuleLoader__.load({
     }
 
     /** The 5 Y-axis ticks of the chart, max → 0, as `{ratio, value, text}`. */
+    /**
+     * Where a chart readout is anchored (v1.7.26).
+     *
+     * Centring it on its column pushed it out of the plot near the edges — the TPS
+     * readout is wide enough that hovering 21:00 cut its tail off at the card
+     * border. Within the outer ~18% of the plot the box is pinned to that side
+     * instead, so it always stays inside.
+     */
+    function chartReadoutStyle(index, count) {
+      const ratio = count > 0 ? (index + 0.5) / count : 0.5
+      if (ratio <= 0.18) return { left: '0%' }
+      if (ratio >= 0.82) return { right: '0%' }
+      return { left: `${ratio * 100}%`, transform: 'translateX(-50%)' }
+    }
+
     function chartAxisTicks(max, tickText) {
       return [1, 0.75, 0.5, 0.25, 0].map((ratio) => ({
         ratio,
@@ -4995,14 +5015,7 @@ window.__ModuleLoader__.load({
               'aria-hidden': 'true',
               style: { left: `${((hoverIndex + 0.5) / points.length) * 100}%` },
             })
-      const readoutStyle =
-        hovered === null
-          ? undefined
-          : hoverIndex === 0
-            ? { left: '0%' }
-            : hoverIndex === points.length - 1
-              ? { right: '0%' }
-              : { left: `${((hoverIndex + 0.5) / points.length) * 100}%`, transform: 'translateX(-50%)' }
+      const readoutStyle = hovered === null ? undefined : chartReadoutStyle(hoverIndex, points.length)
       const readout =
         hovered === null
           ? null
@@ -6787,15 +6800,8 @@ window.__ModuleLoader__.load({
                   className: 'dsh-tokenlens-chart-readout',
                   'data-speed-readout': 'true',
                   role: 'status',
-                  style:
-                    hoverIndex === 0
-                      ? { left: '0%' }
-                      : hoverIndex === count - 1
-                        ? { right: '0%' }
-                        : {
-                            left: `${(xOf(hoverIndex) / width) * 100}%`,
-                            transform: 'translateX(-50%)',
-                          },
+                  // v1.7.26: same edge-aware anchoring as the shared plot.
+                  style: chartReadoutStyle(hoverIndex, count),
                 },
                 `${readoutLabel} · ${(hovered.tps ?? 0).toFixed(1)} tok/s`,
                 ` · ${t('statsSpeedDetail', {

@@ -4644,6 +4644,30 @@ test('data-mode name cells keep provider names whole (v1.7.25)', () => {
   )
 })
 
+test('chart readouts stay inside the plot and show their whole text (v1.7.26)', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  // Edge-aware anchoring: near either edge the box is pinned to that side.
+  assert.match(
+    source,
+    /function chartReadoutStyle\(index, count\) \{[\s\S]{0,320}?if \(ratio <= 0\.18\) return \{ left: '0%' \}[\s\S]{0,120}?if \(ratio >= 0\.82\) return \{ right: '0%' \}/,
+    'the readout anchors to the near edge instead of always centring',
+  )
+  // Both charts use it: the shared bar plot and the TPS curve.
+  const uses = source.match(/chartReadoutStyle\(/g) ?? []
+  assert.ok(uses.length >= 3, `both charts use the shared anchoring (found ${uses.length - 1} call sites)`)
+  // Wrapping, not ellipsis: a cut-off hover defeats the purpose.
+  assert.match(
+    source,
+    /\.dsh-tokenlens-chart-readout\{[^}]*max-width:calc\(100% - 8px\);white-space:normal;overflow-wrap:break-word/,
+    'the readout wraps inside the plot width',
+  )
+  assert.doesNotMatch(
+    source,
+    /\.dsh-tokenlens-chart-readout\{[^}]*text-overflow:ellipsis/,
+    'and no longer ellipsizes its own content',
+  )
+})
+
 test('the chip uses a native title and the speed card is full width (v1.7.1)', async () => {
   // Two layout-safety guarantees:
   //  - the chip must not mount a Tooltip bubble, which overflowed a narrow dock,
