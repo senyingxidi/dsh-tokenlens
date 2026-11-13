@@ -3627,6 +3627,12 @@ window.__ModuleLoader__.load({
 .dsh-tokenlens-details-charts>.dsh-tokenlens-section-head{flex:1 1 100%}
 .dsh-tokenlens-chart-group{display:flex;flex-direction:column;gap:4px;min-width:0}
 .dsh-tokenlens-donut-group{flex:1 1 260px}
+/* v1.7.18: a GENTLE asymmetry — the harness labels are short (DSH, ZCode) and the
+   model ids are long, so the harness column gives a little width to the model
+   column. Kept well under v1.7.16's 0.85/1.9 split, which read as a lopsided grid;
+   the provider column keeps the base width. */
+.dsh-tokenlens-details-charts-grid>.dsh-tokenlens-donut-group[data-donut-group=harness-chart]{flex:0.8 1 200px}
+.dsh-tokenlens-details-charts-grid>.dsh-tokenlens-donut-group[data-donut-group=model-chart]{flex:1.35 1 320px}
 .dsh-tokenlens-donut-wrap{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0;max-width:100%}
 .dsh-tokenlens-donut{position:relative;flex:none;width:96px;height:96px;display:flex;align-items:center;justify-content:center}
 .dsh-tokenlens-donut-svg{display:block;width:96px;height:96px;overflow:visible}
