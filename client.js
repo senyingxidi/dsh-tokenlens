@@ -3627,15 +3627,15 @@ window.__ModuleLoader__.load({
 .dsh-tokenlens-details-charts>.dsh-tokenlens-section-head{flex:1 1 100%}
 .dsh-tokenlens-chart-group{display:flex;flex-direction:column;gap:4px;min-width:0}
 .dsh-tokenlens-donut-group{flex:1 1 260px}
-/* v1.7.19/21: the three columns keep the donut-left / data-right layout and are
+/* v1.7.19/22: the three columns keep the donut-left / data-right layout and are
    split STRICTLY by ratio. With a non-zero flex-basis the fixed basis diluted the
-   ratios (0.8 / 1 / 1.35 came out as 27% / 35% / 38%), so basis 0 makes the grow
-   factors the actual proportion. v1.7.21 gives the provider column a little more
-   room (it holds the longest legend labels: "Command Code", "Open Design"):
-   0.8 : 1.15 : 1.3 => about 25% / 35% / 40%. */
-.dsh-tokenlens-details-charts-grid>.dsh-tokenlens-donut-group[data-donut-group=harness-chart]{flex:0.8 1 0;min-width:224px}
-.dsh-tokenlens-details-charts-grid>.dsh-tokenlens-donut-group[data-donut-group=provider-chart]{flex:1.15 1 0;min-width:224px}
-.dsh-tokenlens-details-charts-grid>.dsh-tokenlens-donut-group[data-donut-group=model-chart]{flex:1.3 1 0;min-width:224px}
+   ratios, so basis 0 makes the grow factors the actual proportion.
+   v1.7.22: harness is pinned at 25% (its labels are the shortest) and the provider
+   column takes the freed width — at 32-35% its legend was left with ~20px for the
+   label, which broke "Command Code" into "Co / m…". Now 25 / 37 / 38 %. */
+.dsh-tokenlens-details-charts-grid>.dsh-tokenlens-donut-group[data-donut-group=harness-chart]{flex:1 1 0;min-width:250px}
+.dsh-tokenlens-details-charts-grid>.dsh-tokenlens-donut-group[data-donut-group=provider-chart]{flex:1.48 1 0;min-width:250px}
+.dsh-tokenlens-details-charts-grid>.dsh-tokenlens-donut-group[data-donut-group=model-chart]{flex:1.52 1 0;min-width:250px}
 /* v1.7.18: a GENTLE asymmetry — the harness labels are short (DSH, ZCode) and the
    model ids are long, so the harness column gives a little width to the model
    column. Kept well under v1.7.16's 0.85/1.9 split, which read as a lopsided grid;
