@@ -4588,11 +4588,11 @@ test('the donut columns are split strictly by ratio (v1.7.19)', () => {
   // min-width guards the donut + legend from collapsing into a wrapped stack.
   assert.match(
     source,
-    /\[data-donut-group=harness-chart\]\{flex:0\.82 1 0;min-width:224px\}/,
+    /\[data-donut-group=harness-chart\]\{flex:0\.8 1 0;min-width:224px\}/,
     'harness is narrowest',
   )
-  assert.match(source, /\[data-donut-group=provider-chart\]\{flex:1 1 0;min-width:224px\}/, 'provider is the middle')
-  assert.match(source, /\[data-donut-group=model-chart\]\{flex:1\.35 1 0;min-width:224px\}/, 'the model column is widest')
+  assert.match(source, /\[data-donut-group=provider-chart\]\{flex:1\.15 1 0;min-width:224px\}/, 'provider is next')
+  assert.match(source, /\[data-donut-group=model-chart\]\{flex:1\.3 1 0;min-width:224px\}/, 'the model column is widest')
   // The donut/data side-by-side arrangement must survive the re-split.
   assert.match(source, /\.dsh-tokenlens-donut-wrap\{[^}]*display:flex/, 'donut and legend stay in one row')
   assert.match(source, /\.dsh-tokenlens-donut\{[^}]*flex:none;width:96px/, 'the ring keeps its fixed square')
