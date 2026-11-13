@@ -3641,17 +3641,19 @@ window.__ModuleLoader__.load({
    the provider column keeps the base width. */
 .dsh-tokenlens-details-charts-grid>.dsh-tokenlens-donut-group[data-donut-group=harness-chart]{flex:0.8 1 200px}
 .dsh-tokenlens-details-charts-grid>.dsh-tokenlens-donut-group[data-donut-group=model-chart]{flex:1.35 1 320px}
-/* v1.7.18/19: the donut keeps its fixed 96px square and the legend takes the rest
-   of the row, so every group stays donut-left / data-right no matter how the
-   columns are split. */
-.dsh-tokenlens-donut-wrap{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0;max-width:100%}
+/* v1.7.20: the donut keeps its fixed 96px square and the legend takes whatever is
+   left — flex-wrap:nowrap makes that a guarantee. The legend's old basis of 150px
+   was WIDER than the space left in a ~320px column (96 ring + 10 gap), so the flex
+   line overflowed and the legend dropped BELOW the ring; with basis 0 it always
+   shares the row and its label ellipsizes instead. */
+.dsh-tokenlens-donut-wrap{display:flex;align-items:center;gap:10px;flex-wrap:nowrap;min-width:0;max-width:100%}
 .dsh-tokenlens-donut{position:relative;flex:none;width:96px;height:96px;display:flex;align-items:center;justify-content:center}
 .dsh-tokenlens-donut-svg{display:block;width:96px;height:96px;overflow:visible}
 .dsh-tokenlens-donut-segment{transition:stroke-width .15s ease}
 .dsh-tokenlens-donut-segment:hover{stroke-width:12}
 .dsh-tokenlens-donut-center{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;min-width:0}
 .dsh-tokenlens-donut-total{color:var(--dsw-alias-label-primary);font-size:11px;font-weight:600;line-height:1.2;font-variant-numeric:tabular-nums;max-width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center}
-.dsh-tokenlens-donut-legend{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:2px 6px;align-items:start;flex:1 1 150px;min-width:0;overflow:hidden}
+.dsh-tokenlens-donut-legend{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:2px 6px;align-items:start;flex:1 1 0;min-width:0;overflow:hidden}
 .dsh-tokenlens-donut-legend-row{display:contents;font-size:11px;line-height:1.4}
 /* v1.7.13: the dot marks the FIRST line of the label. Centring used to drop it into
    the middle of a wrapped two-line model name. */
