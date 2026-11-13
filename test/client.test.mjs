@@ -4602,6 +4602,21 @@ test('the donut columns are split strictly by ratio (v1.7.19)', () => {
   assert.match(source, /\.dsh-tokenlens-donut\{[^}]*flex:none;width:96px/, 'the ring keeps its fixed square')
 })
 
+test('harness and provider names never wrap in the donut legends (v1.7.23)', () => {
+  const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert.match(
+    source,
+    /\[data-donut-group=harness-chart\] \.dsh-tokenlens-donut-legend-label,\s*\n\.dsh-tokenlens-donut-group\[data-donut-group=provider-chart\] \.dsh-tokenlens-donut-legend-label\{display:block;white-space:nowrap/,
+    'both short-label columns pin their label to one line',
+  )
+  // The model column keeps the 2-line clamp: its ids are long.
+  assert.match(
+    source,
+    /\.dsh-tokenlens-donut-legend-label\{[^}]*-webkit-line-clamp:2/,
+    'the base clamp still applies to model ids',
+  )
+})
+
 test('the chip uses a native title and the speed card is full width (v1.7.1)', async () => {
   // Two layout-safety guarantees:
   //  - the chip must not mount a Tooltip bubble, which overflowed a narrow dock,

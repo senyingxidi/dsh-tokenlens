@@ -3660,6 +3660,12 @@ window.__ModuleLoader__.load({
    the middle of a wrapped two-line model name. */
 .dsh-tokenlens-donut-dot{flex:none;width:8px;height:8px;border-radius:50%;margin-top:4px}
 .dsh-tokenlens-donut-legend-label{color:var(--dsw-alias-label-secondary);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:normal;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+/* v1.7.23: the harness and provider names are short words — they must stay on ONE
+   line. They used to inherit the 2-line clamp plus character-level wrapping, so a
+   squeezed cell broke "Command Code" into "Co / m…". The model column keeps the
+   clamp: its ids are long and a second line is the useful thing there. */
+.dsh-tokenlens-donut-group[data-donut-group=harness-chart] .dsh-tokenlens-donut-legend-label,
+.dsh-tokenlens-donut-group[data-donut-group=provider-chart] .dsh-tokenlens-donut-legend-label{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal}
 /* v1.7.14/15: the provider code that follows a model name, e.g. (OC). It is a
    suffix so the model stays the first thing the eye lands on; the full provider
    name lives on the row's title. */
